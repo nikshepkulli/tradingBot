@@ -9,10 +9,23 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
 import ta
 import pandas as pd
 import time
 import os
+
+# Load the .env file
+load_dotenv()
+
+# Fetch credentials from environment variables
+API_KEY = os.getenv("ALPACA_API_KEY")
+SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
+
+if not API_KEY or not SECRET_KEY:
+    raise ValueError("API Key or Secret Key not found in the environment.")
+
+
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[
