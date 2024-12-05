@@ -25,35 +25,32 @@ SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 if not API_KEY or not SECRET_KEY:
     raise ValueError("API Key or Secret Key not found in the environment.")
 
-
-
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[
     logging.StreamHandler(),  # Log to console
     logging.FileHandler("trading_bot.log")  # Log to file
 ])
 
-# Alpaca API Credentials
-API_KEY = os.getenv("ALPACA_API_KEY")
-SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
-
 # Initialize Alpaca Clients
 data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
 trading_client = TradingClient(API_KEY, SECRET_KEY, paper=False)  # Set paper=False for live trading
 
-# Fetch Historical Data
+# Fetch Historical Data with SIP Compliance
 def fetch_data(symbol, start_date, end_date):
     try:
+        # Adjust the end_date to 15 minutes before the current time for SIP compliance
+        adjusted_end_date = min(end_date, datetime.now() - timedelta(minutes=15))
         request_params = StockBarsRequest(
             symbol_or_symbols=[symbol],
             timeframe=TimeFrame.Day,
             start=start_date,
-            end=end_date
+            end=adjusted_end_date,
+            feed='iex'  # Use IEX data feed to comply with free subscription limitations
         )
         bars = data_client.get_stock_bars(request_params)
         df = bars.df.reset_index()
         df['close'] = df['close'].astype(float)
-        logging.info(f"Fetched {len(df)} rows of data for {symbol}.")
+        logging.info(f"Fetched {len(df)} rows of data for {symbol}. Adjusted end date: {adjusted_end_date}.")
         return df
     except Exception as e:
         logging.error(f"Error fetching data for {symbol}: {e}")
@@ -218,8 +215,12 @@ if __name__ == "__main__":
             # Fetch live data for predictions
             live_data_start = now - timedelta(days=7)  # Recent data
             live_data_end = now
-            live_data = fetch_data(stock_symbol, start_date=live_data_start, end_date=live_data_end)
-            live_data = add_indicators(live_data)
+            try:
+                live_data = fetch_data(stock_symbol, start_date=live_data_start, end_date=live_data_end)
+                live_data = add_indicators(live_data)
+            except Exception as e:
+                logging.warning(f"Skipping trading due to live data error: {e}")
+                continue
 
             # Check account balance
             account_balance = get_account_balance()
