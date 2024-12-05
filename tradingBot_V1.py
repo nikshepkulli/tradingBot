@@ -33,7 +33,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Initialize Alpaca Clients
 data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
-trading_client = TradingClient(API_KEY, SECRET_KEY, paper=False)  # Set paper=False for live trading
+trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)  # Set paper=False for live trading
 
 # Fetch Historical Data with SIP Compliance
 def fetch_data(symbol, start_date, end_date):
