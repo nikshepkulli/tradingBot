@@ -41,6 +41,47 @@ This documentation outlines the development and deployment process for a Python-
 
 ---
 
+
+# Activating and Deactivating Python Virtual Environment
+
+## **1. Activating the Virtual Environment**
+
+To activate the virtual environment, run the following command:
+
+```bash
+source alpaca_env/bin/activate
+```
+
+Once activated, your terminal prompt will change to indicate that the virtual environment is active. For example:
+
+```bash
+(alpaca_env) [ec2-user@ip-172-31-44-61 tradingBot]$
+```
+
+---
+
+## **2. Deactivating the Virtual Environment**
+
+To deactivate the virtual environment, simply run:
+
+```bash
+deactivate
+```
+
+After deactivation, your terminal prompt will return to the default state:
+
+```bash
+[ec2-user@ip-172-31-44-61 tradingBot]$
+```
+
+---
+
+## **Important Notes**
+
+- Make sure you are inside the directory where the virtual environment (`alpaca_env`) was created before activating it.
+- The `deactivate` command works only when the virtual environment is active.
+
+
 ## Script Enhancements
 
 ### Logging Integration
