@@ -1,7 +1,5 @@
 import logging
-from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
-from alpaca.data.timeframe import TimeFrame
+import yfinance as yf
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
@@ -18,7 +16,7 @@ import os
 # Load the .env file
 load_dotenv()
 
-# Fetch credentials from environment variables
+# Fetch Alpaca credentials from environment variables
 API_KEY = os.getenv("ALPACA_API_KEY")
 SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 
@@ -31,42 +29,21 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
     logging.FileHandler("trading_bot.log")  # Log to file
 ])
 
-# Initialize Alpaca Clients
-data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
+# Initialize Alpaca Trading Client
 trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)  # Set paper=False for live trading
 
-# Check if a Symbol is Tradable on IEX
-def is_symbol_tradable(symbol):
-    try:
-        asset = trading_client.get_asset(symbol)
-        if asset.tradable and asset.exchange == "IEX":
-            logging.info(f"{symbol} is tradable on IEX.")
-            return True
-        logging.warning(f"{symbol} is not tradable on IEX.")
-        return False
-    except Exception as e:
-        logging.error(f"Error checking symbol {symbol}: {e}")
-        return False
-
-# Fetch Historical Data with IEX Feed
+# Fetch Historical Data using Yahoo Finance
 def fetch_data(symbol, start_date, end_date):
     try:
-        # Adjust the end_date to 15 minutes before the current time for SIP compliance
-        adjusted_end_date = min(end_date, datetime.now() - timedelta(minutes=15))
-        request_params = StockBarsRequest(
-            symbol_or_symbols=[symbol],
-            timeframe=TimeFrame.Day,
-            start=start_date,
-            end=adjusted_end_date,
-            feed='iex'  # Use IEX data feed
-        )
-        bars = data_client.get_stock_bars(request_params)
-        df = bars.df.reset_index()
+        # Download historical data using yfinance
+        df = yf.download(symbol, start=start_date, end=end_date, progress=False)
+        df.reset_index(inplace=True)
+        df.rename(columns={'Adj Close': 'close'}, inplace=True)
         df['close'] = df['close'].astype(float)
-        logging.info(f"Fetched {len(df)} rows of data for {symbol}. Adjusted end date: {adjusted_end_date}.")
+        logging.info(f"Fetched {len(df)} rows of data for {symbol} using Yahoo Finance.")
         return df
     except Exception as e:
-        logging.error(f"Error fetching data for {symbol}: {e}")
+        logging.error(f"Error fetching data for {symbol} from Yahoo Finance: {e}")
         raise
 
 # Add Technical Indicators
@@ -128,17 +105,28 @@ def get_account_balance():
         logging.error(f"Error fetching account balance: {e}")
         raise
 
+# Alpaca Trading API: Place Order
+def place_order(symbol, budget, side):
+    try:
+        # Dummy quantity calculation for now
+        order = MarketOrderRequest(
+            symbol=symbol,
+            qty=1,  # Replace with fractional share calculation if needed
+            side=side,
+            time_in_force=TimeInForce.GTC
+        )
+        trading_client.submit_order(order)
+        logging.info(f"Order placed: {side} 1 share of {symbol}")
+    except Exception as e:
+        logging.error(f"Error placing order for {symbol}: {e}")
+        raise
+
 # Main Function
 if __name__ == "__main__":
     stock_symbol = "NVDA"  # NVIDIA stock symbol
     budget = 50  # Budget per trade
     retrain_interval = timedelta(days=1)  # Retrain every 1 day
     last_trained = None
-
-    # Check if the symbol is tradable on IEX before proceeding
-    if not is_symbol_tradable(stock_symbol):
-        logging.error(f"Symbol {stock_symbol} is not tradable on IEX. Exiting.")
-        exit(1)
 
     while True:
         now = datetime.now()
@@ -147,7 +135,9 @@ if __name__ == "__main__":
         if last_trained is None or (now - last_trained) >= retrain_interval:
             start_date = datetime(2021, 1, 1)  # Historical data start
             end_date = now - timedelta(days=1)  # Up to yesterday
-            model, scaler = train_model(fetch_data(stock_symbol, start_date, end_date))
+            historical_data = fetch_data(stock_symbol, start_date, end_date)
+            historical_data = add_indicators(historical_data)
+            model, scaler = train_model(historical_data)
             last_trained = now
 
         # Check market status
@@ -164,9 +154,8 @@ if __name__ == "__main__":
                 logging.warning(f"Skipping trading due to live data error: {e}")
                 continue
 
-            # Predict and trade
-            # Add prediction and order execution logic as per your use case
-            logging.info("Predictions and trade logic should be added here.")
+            # Example Prediction Logic
+            logging.info("This is where prediction and trade execution would occur.")
         else:
             logging.info("Market is closed. Predictions on historical data only.")
 
