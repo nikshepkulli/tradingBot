@@ -35,7 +35,20 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
 trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)  # Set paper=False for live trading
 
-# Fetch Historical Data with SIP Compliance
+# Check if a Symbol is Tradable on IEX
+def is_symbol_tradable(symbol):
+    try:
+        asset = trading_client.get_asset(symbol)
+        if asset.tradable and asset.exchange == "IEX":
+            logging.info(f"{symbol} is tradable on IEX.")
+            return True
+        logging.warning(f"{symbol} is not tradable on IEX.")
+        return False
+    except Exception as e:
+        logging.error(f"Error checking symbol {symbol}: {e}")
+        return False
+
+# Fetch Historical Data with IEX Feed
 def fetch_data(symbol, start_date, end_date):
     try:
         # Adjust the end_date to 15 minutes before the current time for SIP compliance
@@ -45,7 +58,7 @@ def fetch_data(symbol, start_date, end_date):
             timeframe=TimeFrame.Day,
             start=start_date,
             end=adjusted_end_date,
-            feed='iex'  # Use IEX data feed to comply with free subscription limitations
+            feed='iex'  # Use IEX data feed
         )
         bars = data_client.get_stock_bars(request_params)
         df = bars.df.reset_index()
@@ -115,88 +128,17 @@ def get_account_balance():
         logging.error(f"Error fetching account balance: {e}")
         raise
 
-# Calculate Fractional Quantity Based on Budget
-def calculate_fractional_quantity(symbol, budget):
-    try:
-        latest_bar = data_client.get_stock_bars(StockBarsRequest(
-            symbol_or_symbols=symbol, timeframe=TimeFrame.Minute, start=datetime.now() - timedelta(minutes=5)
-        ))
-        price = float(latest_bar.df['close'].iloc[-1])  # Get the latest closing price
-        quantity = budget / price  # Calculate how many shares you can afford
-        logging.info(f"Calculated fractional quantity: {quantity:.4f} shares of {symbol}")
-        return round(quantity, 4)  # Round to 4 decimal places for precision
-    except Exception as e:
-        logging.error(f"Error calculating fractional quantity for {symbol}: {e}")
-        raise
-
-# Alpaca Trading API: Place Order
-def place_order(symbol, budget, side):
-    try:
-        available_balance = get_account_balance()
-        if available_balance < budget:
-            logging.warning(f"Insufficient funds to place order for {symbol}. Available: ${available_balance:.2f}, Required: ${budget:.2f}")
-            return
-
-        quantity = calculate_fractional_quantity(symbol, budget)
-        if quantity <= 0:
-            logging.warning(f"Not enough budget to trade {symbol}.")
-            return
-
-        order = MarketOrderRequest(
-            symbol=symbol,
-            qty=quantity,
-            side=side,
-            time_in_force=TimeInForce.GTC
-        )
-        trading_client.submit_order(order)
-        logging.info(f"Order placed: {side} {quantity} shares of {symbol}")
-    except Exception as e:
-        logging.error(f"Error placing order for {symbol}: {e}")
-        raise
-
-# Predict and Place Orders
-def place_orders(model, scaler, live_data, budget):
-    try:
-        features = ['rsi', 'ema_10', 'macd']
-        if live_data.empty:
-            logging.warning("Live data is empty. No trades can be executed.")
-            return
-
-        live_data = live_data.fillna(0)  # Handle NaNs
-        live_data_scaled = scaler.transform(live_data[features])
-        probabilities = model.predict_proba(live_data_scaled)
-
-        for i, prob in enumerate(probabilities):
-            symbol = live_data['symbol'].iloc[i]
-            if prob[1] > 0.6:  # Confidence for buy
-                logging.info(f"Buy signal: {prob[1]*100:.2f}% confidence for {symbol}")
-                place_order(symbol, budget, OrderSide.BUY)
-            elif prob[0] > 0.6:  # Confidence for sell
-                logging.info(f"Sell signal: {prob[0]*100:.2f}% confidence for {symbol}")
-                place_order(symbol, budget, OrderSide.SELL)
-    except Exception as e:
-        logging.error(f"Error during placing orders: {e}")
-        raise
-
-# Retrain the Model
-def retrain_model(symbol, start_date, end_date):
-    try:
-        logging.info("Retraining model with updated historical data...")
-        historical_data = fetch_data(symbol, start_date, end_date)
-        historical_data = add_indicators(historical_data)
-        model, scaler = train_model(historical_data)
-        logging.info("Model retrained successfully!")
-        return model, scaler
-    except Exception as e:
-        logging.error(f"Error retraining model: {e}")
-        raise
-
 # Main Function
 if __name__ == "__main__":
     stock_symbol = "NVDA"  # NVIDIA stock symbol
     budget = 50  # Budget per trade
     retrain_interval = timedelta(days=1)  # Retrain every 1 day
     last_trained = None
+
+    # Check if the symbol is tradable on IEX before proceeding
+    if not is_symbol_tradable(stock_symbol):
+        logging.error(f"Symbol {stock_symbol} is not tradable on IEX. Exiting.")
+        exit(1)
 
     while True:
         now = datetime.now()
@@ -205,7 +147,7 @@ if __name__ == "__main__":
         if last_trained is None or (now - last_trained) >= retrain_interval:
             start_date = datetime(2021, 1, 1)  # Historical data start
             end_date = now - timedelta(days=1)  # Up to yesterday
-            model, scaler = retrain_model(stock_symbol, start_date, end_date)
+            model, scaler = train_model(fetch_data(stock_symbol, start_date, end_date))
             last_trained = now
 
         # Check market status
@@ -216,20 +158,15 @@ if __name__ == "__main__":
             live_data_start = now - timedelta(days=7)  # Recent data
             live_data_end = now
             try:
-                live_data = fetch_data(stock_symbol, start_date=live_data_start, end_date=live_data_end)
+                live_data = fetch_data(stock_symbol, live_data_start, live_data_end)
                 live_data = add_indicators(live_data)
             except Exception as e:
                 logging.warning(f"Skipping trading due to live data error: {e}")
                 continue
 
-            # Check account balance
-            account_balance = get_account_balance()
-            if account_balance < budget:
-                logging.warning(f"Insufficient funds to continue trading. Available balance: ${account_balance:.2f}")
-                break  # Exit the loop if no funds remain
-
             # Predict and trade
-            place_orders(model, scaler, live_data, budget)
+            # Add prediction and order execution logic as per your use case
+            logging.info("Predictions and trade logic should be added here.")
         else:
             logging.info("Market is closed. Predictions on historical data only.")
 
