@@ -134,6 +134,19 @@ def train_model(data):
     except Exception as e:
         logging.error(f"Error training model: {e}")
         raise
+        
+# Check if the market is open
+def is_market_open():
+    try:
+        clock = trading_client.get_clock()
+        if clock.is_open:
+            logging.info("Market is open.")
+            return True
+        logging.info(f"Market is closed. Next open: {clock.next_open}, Next close: {clock.next_close}")
+        return False
+    except Exception as e:
+        logging.error(f"Error checking market status: {e}")
+        raise
 
 # Get Current Price
 def get_current_price(symbol):
