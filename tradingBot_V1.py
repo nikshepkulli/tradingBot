@@ -214,28 +214,36 @@ def trading_bot():
             model, scaler = train_model(historical_data)
             last_trained = now
 
-        # Check if market is open
+       # Check if market is open
         if is_market_open():
             logging.info("Market is open. Fetching live data for trading.")
-            live_data = fetch_data(stock_symbol, now - timedelta(days=7), now)
-            live_data = add_indicators(live_data)
+            try:
+                # Extend the live data fetch window to 30 days to ensure sufficient rows
+                live_data = fetch_data(stock_symbol, now - timedelta(days=30), now)
+                logging.info(f"Live data shape: {live_data.shape}")
+                if len(live_data) >= 14:  # Ensure sufficient rows for indicators
+                    live_data = add_indicators(live_data)
 
-            # Predict and place orders
-            features = ['rsi', 'ema_10', 'macd', 'bollinger_high', 'bollinger_low', 'atr']
-            live_data_scaled = scaler.transform(live_data[features])
-            probabilities = model.predict_proba(live_data_scaled)
+                    # Predict and place orders
+                    features = ['rsi', 'ema_10', 'macd', 'bollinger_high', 'bollinger_low', 'atr']
+                    live_data_scaled = scaler.transform(live_data[features])
+                    probabilities = model.predict_proba(live_data_scaled)
 
-            for i, prob in enumerate(probabilities):
-                confidence_buy = prob[1] > 0.7
-                confidence_sell = prob[0] > 0.7
-                
-                balance = get_account_balance()
-                if confidence_buy:
-                    logging.info(f"High confidence buy signal: {prob[1]*100:.2f}% for {stock_symbol}")
-                    place_order_with_risk_management(stock_symbol, balance, risk_percentage, OrderSide.BUY)
-                elif confidence_sell:
-                    logging.info(f"High confidence sell signal: {prob[0]*100:.2f}% for {stock_symbol}")
-                    place_order_with_risk_management(stock_symbol, balance, risk_percentage, OrderSide.SELL)
+                    for i, prob in enumerate(probabilities):
+                        confidence_buy = prob[1] > 0.7
+                        confidence_sell = prob[0] > 0.7
+
+                        balance = get_account_balance()
+                        if confidence_buy:
+                            logging.info(f"High confidence buy signal: {prob[1]*100:.2f}% for {stock_symbol}")
+                            place_order_with_risk_management(stock_symbol, balance, risk_percentage, OrderSide.BUY)
+                        elif confidence_sell:
+                            logging.info(f"High confidence sell signal: {prob[0]*100:.2f}% for {stock_symbol}")
+                            place_order_with_risk_management(stock_symbol, balance, risk_percentage, OrderSide.SELL)
+                else:
+                    logging.warning(f"Insufficient live data rows: {len(live_data)} rows fetched, minimum 14 required.")
+            except Exception as e:
+                logging.error(f"Error during live trading: {e}")
 
         # Sleep before next iteration
         time.sleep(600)
