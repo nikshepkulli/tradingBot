@@ -83,6 +83,14 @@ def train_model(data):
     try:
         features = ['rsi', 'ema_10', 'macd', 'bollinger_high', 'bollinger_low', 'atr']
         target = 'target'
+
+        # Validate required columns
+        missing_features = [col for col in features if col not in data.columns]
+        if missing_features:
+            raise ValueError(f"Missing required features for training: {missing_features}")
+        if target not in data.columns:
+            raise ValueError("Target column 'target' is missing from the dataset.")
+
         X = data[features]
         y = data[target]
 
@@ -157,7 +165,9 @@ if __name__ == "__main__":
         if last_trained is None or (now - last_trained) >= retrain_interval:
             start_date = datetime(2021, 1, 1)
             end_date = now - timedelta(days=1)
-            model, scaler = train_model(fetch_data(stock_symbol, start_date, end_date))
+            historical_data = fetch_data(stock_symbol, start_date, end_date)
+            historical_data = add_indicators(historical_data)
+            model, scaler = train_model(historical_data)
             last_trained = now
 
         # Check if market is open
