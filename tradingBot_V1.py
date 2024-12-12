@@ -1,4 +1,6 @@
 import logging
+from flask import Flask, jsonify, render_template
+import threading
 
 # Check if Alpaca is installed, if not, provide guidance
 try:
@@ -22,6 +24,28 @@ import numpy as np
 import time
 import os
 
+# Flask app for monitoring
+app = Flask(__name__)
+log_data = []  # Store log entries for the web interface
+
+# Flask Route for the Dashboard
+@app.route("/")
+def dashboard():
+    return render_template("dashboard.html", logs=log_data)
+
+# Flask Route for API Logs
+@app.route("/logs")
+def get_logs():
+    return jsonify(log_data)
+
+# Custom logger to capture logs in memory
+class InMemoryLogger(logging.Handler):
+    def emit(self, record):
+        log_entry = self.format(record)
+        log_data.append(log_entry)
+        if len(log_data) > 1000:  # Limit stored logs to 1000 entries
+            log_data.pop(0)
+
 # Load the .env file
 load_dotenv()
 
@@ -33,14 +57,17 @@ if not API_KEY or not SECRET_KEY:
     raise ValueError("API Key or Secret Key not found in the environment.")
 
 # Set up logging
+in_memory_logger = InMemoryLogger()
+in_memory_logger.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[
     logging.StreamHandler(),
-    logging.FileHandler("enhanced_trading_bot.log")
+    logging.FileHandler("enhanced_trading_bot.log"),
+    in_memory_logger
 ])
 
 # Initialize Alpaca Clients
 data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
-trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
+trading_client = TradingClient(API_KEY, SECRET_KEY, paper=False)
 
 # Fetch Historical Data with SIP Compliance
 def fetch_data(symbol, start_date, end_date):
@@ -151,8 +178,9 @@ def place_order_with_risk_management(symbol, balance, risk_percentage, side, sto
         logging.error(f"Error placing order with risk management for {symbol}: {e}")
         raise
 
-# Main Function
-if __name__ == "__main__":
+# Trading Bot Main Logic
+
+def trading_bot():
     stock_symbol = "NVDA"
     risk_percentage = 0.02  # Risk 2% of account balance per trade
     retrain_interval = timedelta(days=1)
@@ -195,3 +223,9 @@ if __name__ == "__main__":
 
         # Sleep before next iteration
         time.sleep(600)
+
+# Run Flask and Trading Bot in Parallel
+if __name__ == "__main__":
+    bot_thread = threading.Thread(target=trading_bot)
+    bot_thread.start()
+    app.run(host="0.0.0.0", port=5000)
