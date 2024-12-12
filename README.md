@@ -1,3 +1,5 @@
+- [Open the dashboard in your browser](http://<your-ec2-public-ip>:5000)
+- [View the logs](http://<your-ec2-public-ip>:5000/logs)
 
 # Trading Bot Development and Deployment Wiki
 
