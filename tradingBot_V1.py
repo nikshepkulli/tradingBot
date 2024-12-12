@@ -84,6 +84,8 @@ def fetch_data(symbol, start_date, end_date):
         df = bars.df.reset_index()
         df['close'] = df['close'].astype(float)
         logging.info(f"Fetched {len(df)} rows of data for {symbol}. Adjusted end date: {adjusted_end_date}.")
+        if len(df) < 14:  # Ensure sufficient rows
+            raise ValueError(f"Insufficient data for {symbol}. Fetched {len(df)} rows, minimum 14 required.")
         return df
     except Exception as e:
         logging.error(f"Error fetching data for {symbol}: {e}")
