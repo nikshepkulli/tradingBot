@@ -31,7 +31,11 @@ log_data = []  # Store log entries for the web interface
 # Flask Route for the Dashboard
 @app.route("/")
 def dashboard():
-    return render_template("dashboard.html", logs=log_data)
+    try:
+        return render_template("dashboard.html", logs=log_data)
+    except Exception as e:
+        logging.error(f"Error rendering dashboard: {e}")
+        return jsonify({"error": "Dashboard template not found"}), 500
 
 # Flask Route for API Logs
 @app.route("/logs")
@@ -67,7 +71,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Initialize Alpaca Clients
 data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
-trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
+trading_client = TradingClient(API_KEY, SECRET_KEY, paper=False)
 
 # Fetch Historical Data with SIP Compliance
 def fetch_data(symbol, start_date, end_date):
@@ -84,8 +88,6 @@ def fetch_data(symbol, start_date, end_date):
         df = bars.df.reset_index()
         df['close'] = df['close'].astype(float)
         logging.info(f"Fetched {len(df)} rows of data for {symbol}. Adjusted end date: {adjusted_end_date}.")
-        if len(df) < 14:  # Ensure sufficient rows
-            raise ValueError(f"Insufficient data for {symbol}. Fetched {len(df)} rows, minimum 14 required.")
         return df
     except Exception as e:
         logging.error(f"Error fetching data for {symbol}: {e}")
@@ -94,31 +96,18 @@ def fetch_data(symbol, start_date, end_date):
 # Add Technical Indicators
 def add_indicators(data):
     try:
-        # Log the size of the dataset
-        logging.info(f"Dataset size before adding indicators: {len(data)} rows.")
-
-        # Ensure sufficient data for calculations
-        min_rows_required = max(14, 10)  # Example: max of RSI(14) and EMA(10) default windows
-        if len(data) < min_rows_required:
-            raise ValueError(f"Insufficient data for calculating indicators. Minimum {min_rows_required} rows required, but got {len(data)}.")
-
-        # Add indicators
         data['rsi'] = ta.momentum.RSIIndicator(close=data['close']).rsi()
         data['ema_10'] = ta.trend.EMAIndicator(close=data['close'], window=10).ema_indicator()
         data['macd'] = ta.trend.MACD(close=data['close']).macd()
         data['bollinger_high'] = ta.volatility.BollingerBands(close=data['close']).bollinger_hband()
         data['bollinger_low'] = ta.volatility.BollingerBands(close=data['close']).bollinger_lband()
         data['atr'] = ta.volatility.AverageTrueRange(high=data['high'], low=data['low'], close=data['close']).average_true_range()
-
-        # Target column for ML
         data['target'] = (data['close'].shift(-1) > data['close']).astype(int)
-
         logging.info("Technical indicators added successfully.")
         return data.dropna()
     except Exception as e:
         logging.error(f"Error adding indicators: {e}")
         raise
-
 
 # Train ML Model
 def train_model(data):
@@ -149,7 +138,7 @@ def train_model(data):
     except Exception as e:
         logging.error(f"Error training model: {e}")
         raise
-        
+
 # Check if the market is open
 def is_market_open():
     try:
