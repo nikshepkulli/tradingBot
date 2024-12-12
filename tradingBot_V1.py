@@ -92,18 +92,31 @@ def fetch_data(symbol, start_date, end_date):
 # Add Technical Indicators
 def add_indicators(data):
     try:
+        # Log the size of the dataset
+        logging.info(f"Dataset size before adding indicators: {len(data)} rows.")
+
+        # Ensure sufficient data for calculations
+        min_rows_required = max(14, 10)  # Example: max of RSI(14) and EMA(10) default windows
+        if len(data) < min_rows_required:
+            raise ValueError(f"Insufficient data for calculating indicators. Minimum {min_rows_required} rows required, but got {len(data)}.")
+
+        # Add indicators
         data['rsi'] = ta.momentum.RSIIndicator(close=data['close']).rsi()
         data['ema_10'] = ta.trend.EMAIndicator(close=data['close'], window=10).ema_indicator()
         data['macd'] = ta.trend.MACD(close=data['close']).macd()
         data['bollinger_high'] = ta.volatility.BollingerBands(close=data['close']).bollinger_hband()
         data['bollinger_low'] = ta.volatility.BollingerBands(close=data['close']).bollinger_lband()
         data['atr'] = ta.volatility.AverageTrueRange(high=data['high'], low=data['low'], close=data['close']).average_true_range()
+
+        # Target column for ML
         data['target'] = (data['close'].shift(-1) > data['close']).astype(int)
+
         logging.info("Technical indicators added successfully.")
         return data.dropna()
     except Exception as e:
         logging.error(f"Error adding indicators: {e}")
         raise
+
 
 # Train ML Model
 def train_model(data):
