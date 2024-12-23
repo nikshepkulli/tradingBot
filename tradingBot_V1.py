@@ -314,6 +314,9 @@ def trading_bot():
     last_trained = None
     confidence_threshold = 0.75
 
+    # Track whether the bot has a position
+    has_position = False
+
     while True:
         try:
             now = datetime.now()
@@ -358,12 +361,14 @@ def trading_bot():
                         probabilities = model.predict_proba(live_data_scaled)[0]
 
                         # Trading decision
-                        if probabilities[1] > confidence_threshold:
+                        if probabilities[1] > confidence_threshold and not has_position:
                             logging.info(f"High confidence BUY signal detected ({probabilities[1]*100:.2f}%). Placing order.")
                             place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, OrderSide.BUY, price)
-                        elif probabilities[0] > confidence_threshold:
+                            has_position = True  # Update position state
+                        elif probabilities[0] > confidence_threshold and has_position:
                             logging.info(f"High confidence SELL signal detected ({probabilities[0]*100:.2f}%). Placing order.")
                             place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, OrderSide.SELL, price)
+                            has_position = False  # Update position state
             else:
                 logging.info("Market is closed. Skipping trading.")
                 time.sleep(300)
