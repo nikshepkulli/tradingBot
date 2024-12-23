@@ -246,6 +246,18 @@ def calculate_position_size(balance, risk_percentage, price):
     position_size = (balance * risk_percentage) / price
     return round(position_size, 4)
 
+def get_available_position(symbol):
+    """Get the available position for a specific symbol."""
+    try:
+        positions = trading_client.get_all_positions()
+        for position in positions:
+            if position.symbol == symbol:
+                return float(position.qty_available)
+        return 0.0  # Return 0 if no position is found
+    except Exception as e:
+        logging.error(f"Error fetching position for {symbol}: {e}")
+        return 0.0
+
 def place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, side, price):
     """Place order with enhanced risk management"""
     try:
@@ -266,6 +278,16 @@ def place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, 
         # Ensure quantity is fractional (if required by account type)
         quantity = round(quantity, 6)  # Alpaca supports up to 6 decimal places for fractional shares
 
+        # Check available position for sell orders
+        if side == OrderSide.SELL:
+            available_qty = get_available_position(symbol)
+            if available_qty < quantity:
+                logging.warning(f"Reducing sell quantity for {symbol} from {quantity} to {available_qty} due to insufficient available shares.")
+                quantity = available_qty
+                if quantity <= 0:
+                    logging.warning(f"No shares available to sell for {symbol}. Skipping order.")
+                    return
+
         # Wrap stop_loss and take_profit in their respective request classes
         stop_loss = StopLossRequest(stop_price=price * (1 - stop_loss_pct))
         take_profit = TakeProfitRequest(limit_price=price * (1 + take_profit_pct))
@@ -280,7 +302,7 @@ def place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, 
         )
         
         trading_client.submit_order(order)
-        logging.info(f"Order placed - Side: {side}, Quantity: {quantity}, Stop Loss: ${stop_loss.stop_price:.2f}, Take Profit: ${take_profit.limit_price:.2f}")
+        logging.info(f"Order placed - Symbol: {symbol}, Side: {side}, Quantity: {quantity}, Stop Loss: ${stop_loss.stop_price:.2f}, Take Profit: ${take_profit.limit_price:.2f}")
     except Exception as e:
         logging.error(f"Error placing order: {e}")
 
