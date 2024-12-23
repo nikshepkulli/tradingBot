@@ -66,24 +66,27 @@ def get_current_price_enhanced(symbol):
     """Enhanced price fetching with multiple fallback strategies"""
     def try_fetch_bars(timeframe, window_minutes):
         try:
+            logging.info(f"Attempting to fetch {timeframe} data for the past {window_minutes} minutes.")
             bars = data_client.get_stock_bars(StockBarsRequest(
                 symbol_or_symbols=[symbol],
                 timeframe=timeframe,
                 start=datetime.now() - timedelta(minutes=window_minutes),
-                feed='iex'
+                feed='iex'  # Ensure correct feed is used
             ))
             if not bars.df.empty and 'close' in bars.df.columns:
+                logging.info(f"Fetched price data for {symbol}: {bars.df.tail()}")
                 return float(bars.df['close'].iloc[-1])
+            logging.warning(f"No valid data in {timeframe} request for {symbol}.")
             return None
         except Exception as e:
-            logging.warning(f"Error in price fetch attempt: {e}")
+            logging.warning(f"Error in price fetch attempt for {timeframe}: {e}")
             return None
 
     attempts = [
         (TimeFrame.Minute, 5),
         (TimeFrame.Minute, 15),
-        (TimeFrame.Minute, 30),
-        (TimeFrame.Hour, 1)
+        (TimeFrame.Minute, 60),
+        (TimeFrame.Hour, 24)
     ]
 
     for timeframe, window in attempts:
