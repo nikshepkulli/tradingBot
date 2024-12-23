@@ -263,6 +263,9 @@ def place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, 
             logging.warning(f"Not enough funds to place an order for {symbol}.")
             return
 
+        # Ensure quantity is fractional (if required by account type)
+        quantity = round(quantity, 6)  # Alpaca supports up to 6 decimal places for fractional shares
+
         # Wrap stop_loss and take_profit in their respective request classes
         stop_loss = StopLossRequest(stop_price=price * (1 - stop_loss_pct))
         take_profit = TakeProfitRequest(limit_price=price * (1 + take_profit_pct))
@@ -271,7 +274,7 @@ def place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, 
             symbol=symbol,
             qty=quantity,
             side=side,
-            time_in_force=TimeInForce.GTC,
+            time_in_force=TimeInForce.DAY,  # Use DAY for fractional orders
             stop_loss=stop_loss,
             take_profit=take_profit
         )
