@@ -5,7 +5,7 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import StopLossRequest, TakeProfitRequest
+from alpaca.trading.requests import MarketOrderRequest, StopLossRequest, TakeProfitRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import MinMaxScaler
