@@ -5,7 +5,7 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest
+from alpaca.trading.requests import StopLossRequest, TakeProfitRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import MinMaxScaler
@@ -263,8 +263,9 @@ def place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, 
             logging.warning(f"Not enough funds to place an order for {symbol}.")
             return
 
-        stop_loss = price * (1 - stop_loss_pct) if side == OrderSide.BUY else price * (1 + stop_loss_pct)
-        take_profit = price * (1 + take_profit_pct) if side == OrderSide.BUY else price * (1 - take_profit_pct)
+        # Wrap stop_loss and take_profit in their respective request classes
+        stop_loss = StopLossRequest(stop_price=price * (1 - stop_loss_pct))
+        take_profit = TakeProfitRequest(limit_price=price * (1 + take_profit_pct))
 
         order = MarketOrderRequest(
             symbol=symbol,
@@ -276,7 +277,7 @@ def place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, 
         )
         
         trading_client.submit_order(order)
-        logging.info(f"Order placed - Side: {side}, Quantity: {quantity}, Stop Loss: ${stop_loss:.2f}, Take Profit: ${take_profit:.2f}")
+        logging.info(f"Order placed - Side: {side}, Quantity: {quantity}, Stop Loss: ${stop_loss.stop_price:.2f}, Take Profit: ${take_profit.limit_price:.2f}")
     except Exception as e:
         logging.error(f"Error placing order: {e}")
 
