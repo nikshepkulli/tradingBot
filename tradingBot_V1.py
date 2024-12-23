@@ -82,7 +82,7 @@ def fetch_data(symbol, start_date, end_date):
             timeframe=TimeFrame.Day,
             start=start_date,
             end=adjusted_end_date,
-            feed='iex'
+            feed='iex'  # Use IEX feed
         )
         bars = data_client.get_stock_bars(request_params)
         df = bars.df.reset_index()
@@ -92,7 +92,8 @@ def fetch_data(symbol, start_date, end_date):
     except Exception as e:
         logging.error(f"Error fetching data for {symbol}: {e}")
         raise
-        
+
+# Get Account balance
 def get_account_balance():
     try:
         account = trading_client.get_account()
@@ -167,13 +168,18 @@ def is_market_open():
 def get_current_price(symbol):
     try:
         latest_bar = data_client.get_stock_bars(StockBarsRequest(
-            symbol_or_symbols=symbol, timeframe=TimeFrame.Minute, start=datetime.now() - timedelta(minutes=5)
+            symbol_or_symbols=symbol, 
+            timeframe=TimeFrame.Minute, 
+            start=datetime.now() - timedelta(minutes=5),
+            feed='iex'  # Ensure IEX feed is used
         ))
         price = float(latest_bar.df['close'].iloc[-1])
+        logging.info(f"Current price for {symbol}: ${price:.2f}")
         return price
     except Exception as e:
         logging.error(f"Error fetching current price for {symbol}: {e}")
-        raise
+        return None
+
 
 # Dynamic Position Sizing
 def calculate_position_size(balance, risk_percentage, price):
@@ -207,7 +213,6 @@ def place_order_with_risk_management(symbol, balance, risk_percentage, side, sto
         raise
 
 # Trading Bot Main Logic
-
 def trading_bot():
     stock_symbol = "AAPL"
     risk_percentage = 0.02  # Risk 2% of account balance per trade
@@ -243,7 +248,7 @@ def trading_bot():
                         probabilities = model.predict_proba(live_data_scaled)
 
                         for i, prob in enumerate(probabilities):
-                            confidence_buy = prob[1] > 0.6
+                            confidence_buy = prob[1] > 0.6  # Adjusted confidence threshold
                             confidence_sell = prob[0] > 0.6
 
                             balance = get_account_balance()
@@ -259,6 +264,8 @@ def trading_bot():
                     logging.warning(f"Insufficient live data rows: {len(live_data)} rows fetched, minimum 14 required.")
             except Exception as e:
                 logging.error(f"Error during live trading: {e}")
+        else:
+            logging.info("Market is closed. Skipping trading.")
 
         # Sleep before next iteration
         time.sleep(600)
