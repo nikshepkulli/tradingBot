@@ -220,7 +220,7 @@ def trading_bot():
             logging.info("Market is open. Fetching live data for trading.")
             try:
                 # Extend the live data fetch window to 30 days to ensure sufficient rows
-                live_data = fetch_data(stock_symbol, now - timedelta(days=30), now)
+                live_data = fetch_data(stock_symbol, now - timedelta(days=60), now)
                 logging.info(f"Live data shape: {live_data.shape}")
                 if len(live_data) >= 14:  # Ensure sufficient rows for indicators
                     live_data = add_indicators(live_data)
@@ -232,8 +232,8 @@ def trading_bot():
                         probabilities = model.predict_proba(live_data_scaled)
 
                         for i, prob in enumerate(probabilities):
-                            confidence_buy = prob[1] > 0.7
-                            confidence_sell = prob[0] > 0.7
+                            confidence_buy = prob[1] > 0.6
+                            confidence_sell = prob[0] > 0.6
 
                             balance = get_account_balance()
                             if confidence_buy:
