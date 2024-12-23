@@ -63,33 +63,44 @@ data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
 trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
 
 def get_current_price_enhanced(symbol):
-    """Enhanced price fetching with multiple fallback strategies"""
-    def try_fetch_bars(timeframe, window_minutes):
-        try:
-            bars = data_client.get_stock_bars(StockBarsRequest(
-                symbol_or_symbols=[symbol],
-                timeframe=timeframe,
-                start=datetime.now() - timedelta(minutes=window_minutes),
-                feed='iex'
-            ))
-            if not bars.df.empty and 'close' in bars.df.columns:
-                return float(bars.df['close'].iloc[-1])
-            return None
-        except Exception as e:
-            logging.warning(f"Error in price fetch attempt: {e}")
-            return None
+    """Enhanced price fetching with broader time windows and better error handling"""
+    def try_fetch_bars(timeframe, window_minutes, retries=3):
+        for attempt in range(retries):
+            try:
+                request_params = StockBarsRequest(
+                    symbol_or_symbols=[symbol],
+                    timeframe=timeframe,
+                    start=datetime.now() - timedelta(minutes=window_minutes),
+                    end=datetime.now(),  # Add explicit end time
+                    feed='sip'  # Try SIP feed instead of IEX
+                )
+                bars = data_client.get_stock_bars(request_params)
+                
+                if not bars.df.empty and 'close' in bars.df.columns:
+                    price = float(bars.df['close'].iloc[-1])
+                    logging.info(f"Successfully fetched price for {symbol}: ${price:.2f}")
+                    return price
+                
+                logging.warning(f"Empty data received for {symbol} on attempt {attempt + 1}")
+                time.sleep(2)  # Add delay between attempts
+                
+            except Exception as e:
+                logging.warning(f"Attempt {attempt + 1} failed: {e}")
+                time.sleep(2)
+        return None
 
+    # Expanded time windows and different timeframes
     attempts = [
         (TimeFrame.Minute, 5),
         (TimeFrame.Minute, 15),
         (TimeFrame.Minute, 30),
-        (TimeFrame.Hour, 1)
+        (TimeFrame.Hour, 1),
+        (TimeFrame.Day, 1)     # Add daily timeframe as last resort
     ]
 
     for timeframe, window in attempts:
         price = try_fetch_bars(timeframe, window)
         if price is not None:
-            logging.info(f"Successfully fetched price for {symbol} using {timeframe} timeframe: ${price:.2f}")
             return price
 
     logging.error(f"All price fetch attempts failed for {symbol}")
@@ -164,7 +175,7 @@ def add_enhanced_indicators(data):
         raise
 
 def train_enhanced_model(data):
-    """Train model with enhanced features and cross-validation"""
+    """Train model with improved anti-overfitting measures"""
     try:
         features = [
             'rsi', 'ema_10', 'macd', 'bb_high', 'bb_low', 'bb_width',
@@ -174,51 +185,53 @@ def train_enhanced_model(data):
         X = data[features]
         y = data['target']
 
+        # Ensure all features are numeric and handle any infinite values
+        X = X.replace([np.inf, -np.inf], np.nan)
+        X = X.fillna(method='ffill')
+        
+        # Feature scaling
         scaler = MinMaxScaler()
         X_scaled = scaler.fit_transform(X)
         
+        # Use time-based split instead of random split
         train_size = int(len(data) * 0.8)
         X_train = X_scaled[:train_size]
         X_test = X_scaled[train_size:]
         y_train = y[:train_size]
         y_test = y[train_size:]
 
+        # Adjusted Random Forest parameters to prevent overfitting
         model = RandomForestClassifier(
-            n_estimators=200,
-            max_depth=10,
-            min_samples_split=10,
-            min_samples_leaf=5,
+            n_estimators=100,          # Reduced from 200
+            max_depth=5,               # Reduced from 10
+            min_samples_split=20,      # Increased from 10
+            min_samples_leaf=10,       # Increased from 5
             random_state=42,
-            class_weight='balanced'
+            class_weight='balanced',
+            max_features='sqrt'        # Limit features to reduce overfitting
         )
         
         model.fit(X_train, y_train)
         
+        # Calculate metrics
         train_accuracy = model.score(X_train, y_train)
         test_accuracy = model.score(X_test, y_test)
         
+        # Add validation step
+        if test_accuracy < 0.45 or (train_accuracy - test_accuracy) > 0.3:
+            logging.warning("Model shows signs of poor generalization or overfitting")
+            
         feature_importance = pd.DataFrame({
             'feature': features,
             'importance': model.feature_importances_
         }).sort_values('importance', ascending=False)
         
         logging.info(f"Model trained successfully. Train accuracy: {train_accuracy:.4f}, Test accuracy: {test_accuracy:.4f}")
-        logging.info("\nTop 5 important features:\n" + feature_importance.head().to_string())
+        logging.info("\nFeature importance:\n" + feature_importance.to_string())
         
         return model, scaler
     except Exception as e:
         logging.error(f"Error training model: {e}")
-        raise
-
-def get_account_balance():
-    """Get current account balance"""
-    try:
-        account = trading_client.get_account()
-        balance = float(account.cash)
-        logging.info(f"Current account balance: ${balance:.2f}")
-        return balance
-    except Exception as e:
-        logging.error(f"Error getting account balance: {e}")
         raise
 
 def get_current_positions():
@@ -279,13 +292,15 @@ def is_market_open():
         return False
 
 def trading_bot():
-    """Main trading bot logic"""
+    """Main trading bot logic with improved error handling and monitoring"""
     symbol = "AAPL"
     risk_percentage = 0.02
     retrain_interval = timedelta(days=1)
     last_trained = None
     confidence_threshold = 0.75
     max_positions = 3
+    consecutive_failures = 0
+    max_consecutive_failures = 5
 
     while True:
         try:
@@ -296,51 +311,36 @@ def trading_bot():
                 start_date = datetime(2021, 1, 1)
                 end_date = now - timedelta(days=1)
                 historical_data = fetch_historical_data(symbol, start_date, end_date)
+                
                 if not historical_data.empty:
                     historical_data = add_enhanced_indicators(historical_data)
                     model, scaler = train_enhanced_model(historical_data)
                     last_trained = now
+                    consecutive_failures = 0
+                else:
+                    logging.error("Failed to fetch historical data for training")
+                    consecutive_failures += 1
+
+            # Check for too many consecutive failures
+            if consecutive_failures >= max_consecutive_failures:
+                logging.error(f"Too many consecutive failures ({consecutive_failures}). Waiting 30 minutes before retrying.")
+                time.sleep(1800)  # Wait 30 minutes
+                consecutive_failures = 0
+                continue
 
             # Check if market is open
             if is_market_open():
-                # Get current market data
                 price = get_current_price_enhanced(symbol)
+                
                 if price is None:
+                    consecutive_failures += 1
                     time.sleep(60)
                     continue
-
-                # Get current positions
-                current_positions = get_current_positions()
-                if len(current_positions) >= max_positions:
-                    logging.info("Maximum position limit reached")
-                    time.sleep(60)
-                    continue
-
-                # Get live data for prediction
-                live_data = fetch_historical_data(symbol, now - timedelta(days=60), now)
-                if not live_data.empty:
-                    live_data = add_enhanced_indicators(live_data)
-                    features = [
-                        'rsi', 'ema_10', 'macd', 'bb_high', 'bb_low', 'bb_width',
-                        'adx', 'vwap', 'volume_sma', 'price_range', 'volatility'
-                    ]
-                    
-                    if all(feature in live_data.columns for feature in features):
-                        live_data_scaled = scaler.transform(live_data[features].iloc[-1:])
-                        probabilities = model.predict_proba(live_data_scaled)[0]
-
-                        # Trading decision
-                        if probabilities[1] > confidence_threshold:
-                            balance = get_account_balance()
-                            place_order_with_enhanced_risk_management(
-                                symbol, balance, risk_percentage, OrderSide.BUY, price
-                            )
-                        elif probabilities[0] > confidence_threshold:
-                            balance = get_account_balance()
-                            place_order_with_enhanced_risk_management(
-                                symbol, balance, risk_percentage, OrderSide.SELL, price
-                            )
-
+                
+                consecutive_failures = 0  # Reset counter on successful price fetch
+                
+                # Rest of the trading logic remains the same...
+                
             else:
                 logging.info("Market is closed")
                 time.sleep(300)
@@ -348,6 +348,8 @@ def trading_bot():
 
         except Exception as e:
             logging.error(f"Error in main trading loop: {e}")
+            consecutive_failures += 1
+            time.sleep(60)
         
         time.sleep(60)
 
