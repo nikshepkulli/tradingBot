@@ -274,10 +274,13 @@ def place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, 
         if quantity <= 0:
             logging.warning(f"Not enough funds to place an order for {symbol}.")
             return
-
+        
         # Ensure quantity is fractional (if required by account type)
         quantity = round(quantity, 6)  # Alpaca supports up to 6 decimal places for fractional shares
 
+        # Record the trade
+        record_trade(symbol, side, quantity, price)
+        
         # Check available position for sell orders
         if side == OrderSide.SELL:
             available_qty = get_available_position(symbol)
