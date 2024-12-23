@@ -307,75 +307,75 @@ def place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, 
         logging.error(f"Error placing order: {e}")
 
 def trading_bot():
-    """Main trading bot logic"""
-    symbol = "AAPL"
+    """Main trading bot logic for multiple stocks"""
+    symbols = ["AAPL", "NVDA", "MSFT"]  # List of stocks to trade
     risk_percentage = 0.02  # Risk 2% of account balance per trade
     retrain_interval = timedelta(days=1)
-    last_trained = None
+    last_trained = {}
     confidence_threshold = 0.75
 
-    # Track whether the bot has a position
-    has_position = False
+    # Track positions for each stock
+    positions = {symbol: False for symbol in symbols}
 
     while True:
         try:
             now = datetime.now()
 
-            # Retrain model if needed
-            if last_trained is None or (now - last_trained) >= retrain_interval:
-                start_date = datetime(2021, 1, 1)
-                end_date = now - timedelta(days=1)
-                historical_data = fetch_historical_data(symbol, start_date, end_date)
-                if not historical_data.empty:
-                    historical_data = add_enhanced_indicators(historical_data)
-                    model, scaler = train_enhanced_model(historical_data)
-                    last_trained = now
+            for symbol in symbols:
+                # Retrain model if needed
+                if symbol not in last_trained or (now - last_trained[symbol]) >= retrain_interval:
+                    start_date = datetime(2021, 1, 1)
+                    end_date = now - timedelta(days=1)
+                    historical_data = fetch_historical_data(symbol, start_date, end_date)
+                    if not historical_data.empty:
+                        historical_data = add_enhanced_indicators(historical_data)
+                        model, scaler = train_enhanced_model(historical_data)
+                        last_trained[symbol] = now
 
-            # Check if market is open
-            if is_market_open():
-                # Get account balance
-                balance = get_account_balance()
-                if balance is None:
-                    logging.warning("Unable to fetch account balance. Skipping trading.")
-                    time.sleep(60)
+                # Check if market is open
+                if is_market_open():
+                    # Get account balance
+                    balance = get_account_balance()
+                    if balance is None:
+                        logging.warning(f"Unable to fetch account balance for {symbol}. Skipping trading.")
+                        continue
+
+                    # Get current market data
+                    price = get_current_price_enhanced(symbol)
+                    if price is None:
+                        logging.warning(f"Skipping trading for {symbol} due to missing price data.")
+                        continue
+
+                    # Get live data for prediction
+                    live_data = fetch_historical_data(symbol, now - timedelta(days=60), now)
+                    if not live_data.empty:
+                        live_data = add_enhanced_indicators(live_data)
+                        features = [
+                            'rsi', 'ema_10', 'macd', 'bb_high', 'bb_low', 'bb_width',
+                            'adx', 'vwap', 'volume_sma', 'price_range', 'volatility'
+                        ]
+                        
+                        if all(feature in live_data.columns for feature in features):
+                            live_data_scaled = scaler.transform(live_data[features].iloc[-1:])
+                            probabilities = model.predict_proba(live_data_scaled)[0]
+
+                            # Trading decision for each stock
+                            if probabilities[1] > confidence_threshold and not positions[symbol]:
+                                logging.info(f"{symbol}: High confidence BUY signal detected ({probabilities[1]*100:.2f}%). Placing order.")
+                                place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, OrderSide.BUY, price)
+                                positions[symbol] = True  # Update position state
+                            elif probabilities[0] > confidence_threshold and positions[symbol]:
+                                logging.info(f"{symbol}: High confidence SELL signal detected ({probabilities[0]*100:.2f}%). Placing order.")
+                                place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, OrderSide.SELL, price)
+                                positions[symbol] = False  # Update position state
+                else:
+                    logging.info(f"Market is closed. Skipping trading for {symbol}.")
                     continue
-
-                # Get current market data
-                price = get_current_price_enhanced(symbol)
-                if price is None:
-                    logging.warning(f"Skipping trading for {symbol} due to missing price data.")
-                    time.sleep(60)
-                    continue
-
-                # Get live data for prediction
-                live_data = fetch_historical_data(symbol, now - timedelta(days=60), now)
-                if not live_data.empty:
-                    live_data = add_enhanced_indicators(live_data)
-                    features = [
-                        'rsi', 'ema_10', 'macd', 'bb_high', 'bb_low', 'bb_width',
-                        'adx', 'vwap', 'volume_sma', 'price_range', 'volatility'
-                    ]
-                    
-                    if all(feature in live_data.columns for feature in features):
-                        live_data_scaled = scaler.transform(live_data[features].iloc[-1:])
-                        probabilities = model.predict_proba(live_data_scaled)[0]
-
-                        # Trading decision
-                        if probabilities[1] > confidence_threshold and not has_position:
-                            logging.info(f"High confidence BUY signal detected ({probabilities[1]*100:.2f}%). Placing order.")
-                            place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, OrderSide.BUY, price)
-                            has_position = True  # Update position state
-                        elif probabilities[0] > confidence_threshold and has_position:
-                            logging.info(f"High confidence SELL signal detected ({probabilities[0]*100:.2f}%). Placing order.")
-                            place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, OrderSide.SELL, price)
-                            has_position = False  # Update position state
-            else:
-                logging.info("Market is closed. Skipping trading.")
-                time.sleep(300)
 
         except Exception as e:
             logging.error(f"Error in main trading loop: {e}")
         
+        # Delay before next iteration
         time.sleep(60)
 
 
