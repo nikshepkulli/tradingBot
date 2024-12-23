@@ -63,7 +63,7 @@ data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
 trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
 
 def get_current_price_enhanced(symbol):
-    """Enhanced price fetching with broader time windows and better error handling"""
+    """Enhanced price fetching using IEX feed with improved error handling"""
     def try_fetch_bars(timeframe, window_minutes, retries=3):
         for attempt in range(retries):
             try:
@@ -71,8 +71,8 @@ def get_current_price_enhanced(symbol):
                     symbol_or_symbols=[symbol],
                     timeframe=timeframe,
                     start=datetime.now() - timedelta(minutes=window_minutes),
-                    end=datetime.now(),  # Add explicit end time
-                    feed='sip'  # Try SIP feed instead of IEX
+                    end=datetime.now(),
+                    feed='iex'  # Using IEX feed only
                 )
                 bars = data_client.get_stock_bars(request_params)
                 
@@ -81,21 +81,23 @@ def get_current_price_enhanced(symbol):
                     logging.info(f"Successfully fetched price for {symbol}: ${price:.2f}")
                     return price
                 
-                logging.warning(f"Empty data received for {symbol} on attempt {attempt + 1}")
-                time.sleep(2)  # Add delay between attempts
+                if attempt < retries - 1:  # Don't log for last attempt
+                    logging.warning(f"Empty data received for {symbol} on attempt {attempt + 1}")
+                time.sleep(2)
                 
             except Exception as e:
-                logging.warning(f"Attempt {attempt + 1} failed: {e}")
+                if attempt < retries - 1:  # Don't log for last attempt
+                    logging.warning(f"Attempt {attempt + 1} failed: {str(e)}")
                 time.sleep(2)
         return None
 
-    # Expanded time windows and different timeframes
+    # Modified time windows
     attempts = [
+        (TimeFrame.Minute, 1),    # Try most recent minute first
         (TimeFrame.Minute, 5),
         (TimeFrame.Minute, 15),
-        (TimeFrame.Minute, 30),
         (TimeFrame.Hour, 1),
-        (TimeFrame.Day, 1)     # Add daily timeframe as last resort
+        (TimeFrame.Day, 1)
     ]
 
     for timeframe, window in attempts:
@@ -105,6 +107,39 @@ def get_current_price_enhanced(symbol):
 
     logging.error(f"All price fetch attempts failed for {symbol}")
     return None
+
+def prepare_features(data):
+    """Prepare and select features based on importance"""
+    try:
+        # Calculate basic price-based features
+        data['returns'] = data['close'].pct_change()
+        data['log_returns'] = np.log(data['close']).diff()
+        data['volatility'] = data['returns'].rolling(window=20).std()
+        
+        # Momentum indicators
+        data['rsi'] = ta.momentum.RSIIndicator(close=data['close']).rsi()
+        data['roc'] = ta.momentum.ROCIndicator(close=data['close']).roc()
+        
+        # Trend indicators
+        data['macd'] = ta.trend.MACD(close=data['close']).macd()
+        data['adx'] = ta.trend.ADXIndicator(high=data['high'], low=data['low'], close=data['close']).adx()
+        
+        # Volume indicators
+        data['volume_momentum'] = data['volume'].pct_change()
+        data['volume_ma'] = data['volume'].rolling(window=20).mean()
+        data['volume_ratio'] = data['volume'] / data['volume_ma']
+        
+        # Price range and volatility
+        data['price_range'] = (data['high'] - data['low']) / data['close']
+        
+        # Target calculation with multiple thresholds
+        returns_threshold = data['returns'].rolling(window=20).std() * 0.5  # Dynamic threshold
+        data['target'] = ((data['close'].shift(-1) - data['close']) / data['close'] > returns_threshold).astype(int)
+        
+        return data.dropna()
+    except Exception as e:
+        logging.error(f"Error preparing features: {e}")
+        raise
 
 def fetch_historical_data(symbol, start_date, end_date):
     """Fetch historical data with proper error handling"""
@@ -175,58 +210,68 @@ def add_enhanced_indicators(data):
         raise
 
 def train_enhanced_model(data):
-    """Train model with improved anti-overfitting measures"""
+    """Train model with improved feature selection and ensemble approach"""
     try:
         features = [
-            'rsi', 'ema_10', 'macd', 'bb_high', 'bb_low', 'bb_width',
-            'adx', 'vwap', 'volume_ratio', 'price_range', 'volatility'
+            'rsi', 'roc', 'macd', 'adx', 'volume_momentum', 
+            'volume_ratio', 'price_range', 'volatility'
         ]
         
         X = data[features]
         y = data['target']
 
-        # Ensure all features are numeric and handle any infinite values
+        # Handle missing and infinite values
         X = X.replace([np.inf, -np.inf], np.nan)
-        X = X.fillna(method='ffill')
+        X = X.fillna(method='ffill').fillna(method='bfill')
         
         # Feature scaling
         scaler = MinMaxScaler()
         X_scaled = scaler.fit_transform(X)
         
-        # Use time-based split instead of random split
-        train_size = int(len(data) * 0.8)
+        # Time-based split with validation set
+        train_size = int(len(data) * 0.7)
+        val_size = int(len(data) * 0.15)
+        
         X_train = X_scaled[:train_size]
-        X_test = X_scaled[train_size:]
+        X_val = X_scaled[train_size:train_size+val_size]
+        X_test = X_scaled[train_size+val_size:]
+        
         y_train = y[:train_size]
-        y_test = y[train_size:]
+        y_val = y[train_size:train_size+val_size]
+        y_test = y[train_size+val_size:]
 
-        # Adjusted Random Forest parameters to prevent overfitting
+        # Random Forest with balanced parameters
         model = RandomForestClassifier(
-            n_estimators=100,          # Reduced from 200
-            max_depth=5,               # Reduced from 10
-            min_samples_split=20,      # Increased from 10
-            min_samples_leaf=10,       # Increased from 5
+            n_estimators=50,           # Reduced number of trees
+            max_depth=4,               # Shallow trees
+            min_samples_split=50,      # Increased minimum samples
+            min_samples_leaf=20,       # Increased minimum leaf samples
             random_state=42,
             class_weight='balanced',
-            max_features='sqrt'        # Limit features to reduce overfitting
+            max_features='sqrt'
         )
         
         model.fit(X_train, y_train)
         
         # Calculate metrics
         train_accuracy = model.score(X_train, y_train)
+        val_accuracy = model.score(X_val, y_val)
         test_accuracy = model.score(X_test, y_test)
         
-        # Add validation step
-        if test_accuracy < 0.45 or (train_accuracy - test_accuracy) > 0.3:
-            logging.warning("Model shows signs of poor generalization or overfitting")
+        # Validation checks
+        if test_accuracy < 0.45 or (train_accuracy - test_accuracy) > 0.2:
+            logging.warning("Model shows signs of poor generalization")
             
         feature_importance = pd.DataFrame({
             'feature': features,
             'importance': model.feature_importances_
         }).sort_values('importance', ascending=False)
         
-        logging.info(f"Model trained successfully. Train accuracy: {train_accuracy:.4f}, Test accuracy: {test_accuracy:.4f}")
+        logging.info(f"""Model metrics:
+Train accuracy: {train_accuracy:.4f}
+Validation accuracy: {val_accuracy:.4f}
+Test accuracy: {test_accuracy:.4f}""")
+        
         logging.info("\nFeature importance:\n" + feature_importance.to_string())
         
         return model, scaler
@@ -292,13 +337,13 @@ def is_market_open():
         return False
 
 def trading_bot():
-    """Main trading bot logic with improved error handling and monitoring"""
+    """Main trading bot logic with improved error handling"""
     symbol = "AAPL"
-    risk_percentage = 0.02
-    retrain_interval = timedelta(days=1)
+    risk_percentage = 0.01  # Reduced risk percentage
+    retrain_interval = timedelta(hours=12)  # More frequent retraining
     last_trained = None
-    confidence_threshold = 0.75
-    max_positions = 3
+    confidence_threshold = 0.65  # Adjusted confidence threshold
+    max_positions = 2  # Reduced max positions
     consecutive_failures = 0
     max_consecutive_failures = 5
 
@@ -313,7 +358,7 @@ def trading_bot():
                 historical_data = fetch_historical_data(symbol, start_date, end_date)
                 
                 if not historical_data.empty:
-                    historical_data = add_enhanced_indicators(historical_data)
+                    historical_data = prepare_features(historical_data)  # Using new feature preparation
                     model, scaler = train_enhanced_model(historical_data)
                     last_trained = now
                     consecutive_failures = 0
@@ -323,35 +368,60 @@ def trading_bot():
 
             # Check for too many consecutive failures
             if consecutive_failures >= max_consecutive_failures:
-                logging.error(f"Too many consecutive failures ({consecutive_failures}). Waiting 30 minutes before retrying.")
-                time.sleep(1800)  # Wait 30 minutes
+                logging.error(f"Too many consecutive failures ({consecutive_failures}). Waiting 15 minutes.")
+                time.sleep(900)  # Wait 15 minutes
                 consecutive_failures = 0
                 continue
 
-            # Check if market is open
             if is_market_open():
                 price = get_current_price_enhanced(symbol)
                 
                 if price is None:
                     consecutive_failures += 1
-                    time.sleep(60)
+                    time.sleep(30)  # Reduced wait time
                     continue
                 
-                consecutive_failures = 0  # Reset counter on successful price fetch
+                consecutive_failures = 0
                 
-                # Rest of the trading logic remains the same...
-                
+                # Get current positions and perform trading logic
+                current_positions = get_current_positions()
+                if len(current_positions) >= max_positions:
+                    logging.info("Maximum position limit reached")
+                    time.sleep(30)
+                    continue
+
+                # Get live data for prediction
+                live_data = fetch_historical_data(symbol, now - timedelta(days=5), now)
+                if not live_data.empty:
+                    live_data = prepare_features(live_data)
+                    
+                    if all(feature in live_data.columns for feature in model.feature_names_in_):
+                        latest_data = live_data[model.feature_names_in_].iloc[-1:]
+                        latest_scaled = scaler.transform(latest_data)
+                        probabilities = model.predict_proba(latest_scaled)[0]
+
+                        logging.info(f"Prediction probabilities - Buy: {probabilities[1]:.4f}, Sell: {probabilities[0]:.4f}")
+                        
+                        balance = get_account_balance()
+                        if probabilities[1] > confidence_threshold:
+                            place_order_with_enhanced_risk_management(
+                                symbol, balance, risk_percentage, OrderSide.BUY, price
+                            )
+                        elif probabilities[0] > confidence_threshold:
+                            place_order_with_enhanced_risk_management(
+                                symbol, balance, risk_percentage, OrderSide.SELL, price
+                            )
+
             else:
                 logging.info("Market is closed")
                 time.sleep(300)
-                continue
 
         except Exception as e:
             logging.error(f"Error in main trading loop: {e}")
             consecutive_failures += 1
-            time.sleep(60)
+            time.sleep(30)
         
-        time.sleep(60)
+        time.sleep(30)  # Reduced main loop wait time
 
 if __name__ == "__main__":
     # Create template directory and dashboard.html if they don't exist
