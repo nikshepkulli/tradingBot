@@ -116,20 +116,24 @@ def fetch_historical_data(symbol, start_date, end_date):
         raise
 
 def add_enhanced_indicators(data):
-    """Calculate enhanced technical indicators"""
+    """Calculate enhanced technical indicators with corrected volume calculations"""
     try:
         # Basic indicators
         data['rsi'] = ta.momentum.RSIIndicator(close=data['close']).rsi()
         data['ema_10'] = ta.trend.EMAIndicator(close=data['close'], window=10).ema_indicator()
         data['macd'] = ta.trend.MACD(close=data['close']).macd()
         
-        # Volume-based indicators
-        data['volume_sma'] = ta.volume.SMAIndicator(close=data['volume'], window=20).sma_indicator()
+        # Volume-based indicators (corrected)
+        data['volume_sma'] = data['volume'].rolling(window=20).mean()  # Simple moving average of volume
+        data['volume_ratio'] = data['volume'] / data['volume_sma']
+        
+        # VWAP calculation
         data['vwap'] = ta.volume.VolumeWeightedAveragePrice(
             high=data['high'],
             low=data['low'],
             close=data['close'],
-            volume=data['volume']
+            volume=data['volume'],
+            window=14
         ).volume_weighted_average_price()
         
         # Trend indicators
@@ -164,7 +168,7 @@ def train_enhanced_model(data):
     try:
         features = [
             'rsi', 'ema_10', 'macd', 'bb_high', 'bb_low', 'bb_width',
-            'adx', 'vwap', 'volume_sma', 'price_range', 'volatility'
+            'adx', 'vwap', 'volume_ratio', 'price_range', 'volatility'
         ]
         
         X = data[features]
