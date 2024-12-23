@@ -173,7 +173,7 @@ def get_current_price(symbol):
             start=datetime.now() - timedelta(minutes=5),
             feed='iex'  # Ensure IEX feed is used
         ))
-        # Check if data exists and 'close' column is present
+        # Validate the presence of data and 'close' column
         if latest_bar.df.empty or 'close' not in latest_bar.df.columns:
             logging.error(f"No valid data or 'close' column missing for {symbol}")
             return None
@@ -184,15 +184,15 @@ def get_current_price(symbol):
         logging.error(f"Error fetching current price for {symbol}: {e}")
         return None
 
+
 # Dynamic Position Sizing
 def calculate_position_size(balance, risk_percentage, price):
     position_size = (balance * risk_percentage) / price
     return round(position_size, 4)
 
 # Place Order with Stop-Loss and Take-Profit
-def place_order_with_risk_management(symbol, balance, risk_percentage, side, stop_loss_pct=0.02, take_profit_pct=0.05):
+def place_order_with_risk_management(symbol, balance, risk_percentage, side, price, stop_loss_pct=0.02, take_profit_pct=0.05):
     try:
-        price = get_current_price(symbol)
         if price is None:
             logging.warning(f"Skipping order for {symbol} due to missing price data.")
             return
@@ -281,6 +281,14 @@ def trading_bot():
                     time.sleep(600)
                     continue
 
+                # Fetch the current price once
+                price = get_current_price(stock_symbol)
+                if price is None:
+                    logging.warning(f"Skipping trading for {stock_symbol} due to missing price data.")
+                    time.sleep(600)
+                    continue
+
+                # Process predictions
                 live_data_scaled = scaler.transform(live_data[features])
                 probabilities = model.predict_proba(live_data_scaled)
 
@@ -291,10 +299,10 @@ def trading_bot():
                     balance = get_account_balance()
                     if confidence_buy:
                         logging.info(f"High confidence buy signal: {prob[1]*100:.2f}% for {stock_symbol}")
-                        place_order_with_risk_management(stock_symbol, balance, risk_percentage, OrderSide.BUY)
+                        place_order_with_risk_management(stock_symbol, balance, risk_percentage, OrderSide.BUY, price=price)
                     elif confidence_sell:
                         logging.info(f"High confidence sell signal: {prob[0]*100:.2f}% for {stock_symbol}")
-                        place_order_with_risk_management(stock_symbol, balance, risk_percentage, OrderSide.SELL)
+                        place_order_with_risk_management(stock_symbol, balance, risk_percentage, OrderSide.SELL, price=price)
             except Exception as e:
                 logging.error(f"Error during live trading: {e}")
         else:
