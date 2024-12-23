@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Profit/Loss Dashboard</title>
+</head>
+<body>
+    <h1>Profit/Loss Dashboard</h1>
+    <div>
+        <h3>Total Profit/Loss: ${{ total_profit_loss }}</h3>
+    </div>
+    <div>
+        <h3>Trade History</h3>
+        <table border="1">
+            <tr>
+                <th>Asset</th>
+                <th>Side</th>
+                <th>Quantity</th>
+                <th>Filled Price</th>
+                <th>Timestamp</th>
+            </tr>
+            {% for trade in trades %}
+                <tr>
+                    <td>{{ trade.asset }}</td>
+                    <td>{{ trade.side }}</td>
+                    <td>{{ trade.qty }}</td>
+                    <td>${{ trade.filled_price }}</td>
+                    <td>{{ trade.timestamp }}</td>
+                </tr>
+            {% endfor %}
+        </table>
+    </div>
+</body>
+</html>
