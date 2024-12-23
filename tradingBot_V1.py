@@ -99,6 +99,17 @@ def get_current_price_enhanced(symbol):
     logging.error(f"All price fetch attempts failed for {symbol}")
     return None
 
+def get_account_balance():
+    """Get current account balance"""
+    try:
+        account = trading_client.get_account()
+        balance = float(account.cash)
+        logging.info(f"Current account balance: ${balance:.2f}")
+        return balance
+    except Exception as e:
+        logging.error(f"Error getting account balance: {e}")
+        return None
+
 def fetch_historical_data(symbol, start_date, end_date):
     """Fetch historical data with proper error handling"""
     try:
@@ -267,11 +278,10 @@ def place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, 
 def trading_bot():
     """Main trading bot logic"""
     symbol = "AAPL"
-    risk_percentage = 0.02
+    risk_percentage = 0.02  # Risk 2% of account balance per trade
     retrain_interval = timedelta(days=1)
     last_trained = None
     confidence_threshold = 0.75
-    max_positions = 3
 
     while True:
         try:
@@ -289,9 +299,17 @@ def trading_bot():
 
             # Check if market is open
             if is_market_open():
+                # Get account balance
+                balance = get_account_balance()
+                if balance is None:
+                    logging.warning("Unable to fetch account balance. Skipping trading.")
+                    time.sleep(60)
+                    continue
+
                 # Get current market data
                 price = get_current_price_enhanced(symbol)
                 if price is None:
+                    logging.warning(f"Skipping trading for {symbol} due to missing price data.")
                     time.sleep(60)
                     continue
 
@@ -315,16 +333,15 @@ def trading_bot():
                         elif probabilities[0] > confidence_threshold:
                             logging.info(f"High confidence SELL signal detected ({probabilities[0]*100:.2f}%). Placing order.")
                             place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, OrderSide.SELL, price)
-
             else:
-                logging.info("Market is closed")
+                logging.info("Market is closed. Skipping trading.")
                 time.sleep(300)
-                continue
 
         except Exception as e:
             logging.error(f"Error in main trading loop: {e}")
         
         time.sleep(60)
+
 
 # Run Flask and Trading Bot
 if __name__ == "__main__":
