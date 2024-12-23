@@ -167,34 +167,42 @@ def is_market_open():
 # Get Current Price
 def get_current_price(symbol):
     try:
+        # Primary request for recent data
         latest_bar = data_client.get_stock_bars(StockBarsRequest(
             symbol_or_symbols=symbol,
             timeframe=TimeFrame.Minute,
-            start=datetime.now() - timedelta(minutes=10),  # Fetch data for the past 10 minutes
+            start=datetime.now() - timedelta(minutes=5),
             feed='iex'
         ))
-
-        # Log the raw data for debugging
-        if latest_bar.df.empty:
+        
+        if latest_bar.df.empty or 'close' not in latest_bar.df.columns:
             logging.warning(f"Falling back to older data for {symbol}.")
+            
+            # Fallback request with a larger time window
             fallback_data = data_client.get_stock_bars(StockBarsRequest(
                 symbol_or_symbols=symbol,
                 timeframe=TimeFrame.Minute,
-                start=datetime.now() - timedelta(minutes=15),
+                start=datetime.now() - timedelta(minutes=30),
                 end=datetime.now() - timedelta(minutes=5),
                 feed='iex'
             ))
-            if fallback_data.df.empty:
+            
+            if fallback_data.df.empty or 'close' not in fallback_data.df.columns:
                 logging.error(f"No fallback data available for {symbol}.")
                 return None
+            
+            # Return the last available price in the fallback range
             price = float(fallback_data.df['close'].iloc[-1])
             logging.info(f"Fallback price for {symbol}: ${price:.2f}")
             return price
+        
+        # Return the most recent price
+        price = float(latest_bar.df['close'].iloc[-1])
+        logging.info(f"Current price for {symbol}: ${price:.2f}")
+        return price
     except Exception as e:
         logging.error(f"Error fetching current price for {symbol}: {e}")
         return None
-
-
 
 # Dynamic Position Sizing
 def calculate_position_size(balance, risk_percentage, price):
@@ -238,7 +246,6 @@ def trading_bot():
 
     while True:
         now = datetime.now()
-
         # Retrain model if needed
         try:
             if last_trained is None or (now - last_trained) >= retrain_interval:
