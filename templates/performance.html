@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bot Performance Dashboard</title>
+</head>
+<body>
+    <h1>Bot Performance Dashboard</h1>
+    <div>
+        <h3>Logs</h3>
+        <div id="logs">
+            {% for log in logs %}
+                <div>{{ log }}</div>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>
