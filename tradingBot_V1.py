@@ -198,7 +198,7 @@ def place_order_with_risk_management(symbol, balance, risk_percentage, side, sto
 # Trading Bot Main Logic
 
 def trading_bot():
-    stock_symbol = "NVDA"
+    stock_symbol = "AAPL"
     risk_percentage = 0.02  # Risk 2% of account balance per trade
     retrain_interval = timedelta(days=1)
     last_trained = None
