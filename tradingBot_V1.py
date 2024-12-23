@@ -168,18 +168,21 @@ def is_market_open():
 def get_current_price(symbol):
     try:
         latest_bar = data_client.get_stock_bars(StockBarsRequest(
-            symbol_or_symbols=symbol, 
-            timeframe=TimeFrame.Minute, 
+            symbol_or_symbols=symbol,
+            timeframe=TimeFrame.Minute,
             start=datetime.now() - timedelta(minutes=5),
             feed='iex'  # Ensure IEX feed is used
         ))
+        # Check if data exists and 'close' column is present
+        if latest_bar.df.empty or 'close' not in latest_bar.df.columns:
+            logging.error(f"No valid data or 'close' column missing for {symbol}")
+            return None
         price = float(latest_bar.df['close'].iloc[-1])
         logging.info(f"Current price for {symbol}: ${price:.2f}")
         return price
     except Exception as e:
         logging.error(f"Error fetching current price for {symbol}: {e}")
         return None
-
 
 # Dynamic Position Sizing
 def calculate_position_size(balance, risk_percentage, price):
@@ -190,6 +193,10 @@ def calculate_position_size(balance, risk_percentage, price):
 def place_order_with_risk_management(symbol, balance, risk_percentage, side, stop_loss_pct=0.02, take_profit_pct=0.05):
     try:
         price = get_current_price(symbol)
+        if price is None:
+            logging.warning(f"Skipping order for {symbol} due to missing price data.")
+            return
+
         quantity = calculate_position_size(balance, risk_percentage, price)
         if quantity <= 0:
             logging.warning(f"Not enough funds to place an order for {symbol}.")
@@ -210,7 +217,6 @@ def place_order_with_risk_management(symbol, balance, risk_percentage, side, sto
         logging.info(f"Order placed with Stop Loss: {stop_loss}, Take Profit: {take_profit}")
     except Exception as e:
         logging.error(f"Error placing order with risk management for {symbol}: {e}")
-        raise
 
 # Trading Bot Main Logic
 def trading_bot():
@@ -223,45 +229,72 @@ def trading_bot():
         now = datetime.now()
 
         # Retrain model if needed
-        if last_trained is None or (now - last_trained) >= retrain_interval:
-            start_date = datetime(2021, 1, 1)
-            end_date = now - timedelta(days=1)
-            historical_data = fetch_data(stock_symbol, start_date, end_date)
-            historical_data = add_indicators(historical_data)
-            model, scaler = train_model(historical_data)
-            last_trained = now
+        try:
+            if last_trained is None or (now - last_trained) >= retrain_interval:
+                start_date = datetime(2021, 1, 1)
+                end_date = now - timedelta(days=1)
+                historical_data = fetch_data(stock_symbol, start_date, end_date)
+                if historical_data.empty:
+                    logging.warning(f"No historical data available for {stock_symbol}. Skipping retraining.")
+                    time.sleep(600)
+                    continue
+                historical_data = add_indicators(historical_data)
+                if historical_data.empty:
+                    logging.warning(f"Insufficient historical data after adding indicators for {stock_symbol}. Skipping retraining.")
+                    time.sleep(600)
+                    continue
+                model, scaler = train_model(historical_data)
+                last_trained = now
+        except Exception as e:
+            logging.error(f"Error during model retraining: {e}")
+            time.sleep(600)
+            continue
 
         # Check if market is open
         if is_market_open():
             logging.info("Market is open. Fetching live data for trading.")
             try:
-                # Extend the live data fetch window to 30 days to ensure sufficient rows
+                # Extend the live data fetch window to ensure sufficient rows
                 live_data = fetch_data(stock_symbol, now - timedelta(days=60), now)
+                if live_data.empty:
+                    logging.warning(f"No live data available for {stock_symbol}. Skipping this iteration.")
+                    time.sleep(600)
+                    continue
+
                 logging.info(f"Live data shape: {live_data.shape}")
-                if len(live_data) >= 14:  # Ensure sufficient rows for indicators
-                    live_data = add_indicators(live_data)
-
-                    # Predict and place orders
-                    features = ['rsi', 'ema_10', 'macd', 'bollinger_high', 'bollinger_low', 'atr']
-                    if not live_data[features].empty:
-                        live_data_scaled = scaler.transform(live_data[features])
-                        probabilities = model.predict_proba(live_data_scaled)
-
-                        for i, prob in enumerate(probabilities):
-                            confidence_buy = prob[1] > 0.6  # Adjusted confidence threshold
-                            confidence_sell = prob[0] > 0.6
-
-                            balance = get_account_balance()
-                            if confidence_buy:
-                                logging.info(f"High confidence buy signal: {prob[1]*100:.2f}% for {stock_symbol}")
-                                place_order_with_risk_management(stock_symbol, balance, risk_percentage, OrderSide.BUY)
-                            elif confidence_sell:
-                                logging.info(f"High confidence sell signal: {prob[0]*100:.2f}% for {stock_symbol}")
-                                place_order_with_risk_management(stock_symbol, balance, risk_percentage, OrderSide.SELL)
-                    else:
-                        logging.warning("Live data is empty or insufficient for predictions.")
-                else:
+                if len(live_data) < 14:  # Ensure sufficient rows for indicators
                     logging.warning(f"Insufficient live data rows: {len(live_data)} rows fetched, minimum 14 required.")
+                    time.sleep(600)
+                    continue
+
+                live_data = add_indicators(live_data)
+                if live_data.empty:
+                    logging.warning(f"Insufficient live data after adding indicators for {stock_symbol}. Skipping this iteration.")
+                    time.sleep(600)
+                    continue
+
+                # Predict and place orders
+                features = ['rsi', 'ema_10', 'macd', 'bollinger_high', 'bollinger_low', 'atr']
+                if not all(feature in live_data.columns for feature in features):
+                    missing_features = [feature for feature in features if feature not in live_data.columns]
+                    logging.warning(f"Missing features in live data: {missing_features}. Skipping this iteration.")
+                    time.sleep(600)
+                    continue
+
+                live_data_scaled = scaler.transform(live_data[features])
+                probabilities = model.predict_proba(live_data_scaled)
+
+                for i, prob in enumerate(probabilities):
+                    confidence_buy = prob[1] > 0.6  # Adjusted confidence threshold
+                    confidence_sell = prob[0] > 0.6
+
+                    balance = get_account_balance()
+                    if confidence_buy:
+                        logging.info(f"High confidence buy signal: {prob[1]*100:.2f}% for {stock_symbol}")
+                        place_order_with_risk_management(stock_symbol, balance, risk_percentage, OrderSide.BUY)
+                    elif confidence_sell:
+                        logging.info(f"High confidence sell signal: {prob[0]*100:.2f}% for {stock_symbol}")
+                        place_order_with_risk_management(stock_symbol, balance, risk_percentage, OrderSide.SELL)
             except Exception as e:
                 logging.error(f"Error during live trading: {e}")
         else:
@@ -269,6 +302,7 @@ def trading_bot():
 
         # Sleep before next iteration
         time.sleep(600)
+
 
 # Run Flask and Trading Bot in Parallel
 if __name__ == "__main__":
