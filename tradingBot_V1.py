@@ -240,7 +240,12 @@ def is_market_open():
     except Exception as e:
         logging.error(f"Error checking market status: {e}")
         return False
-        
+
+def calculate_position_size(balance, risk_percentage, price):
+    """Calculate position size based on risk management"""
+    position_size = (balance * risk_percentage) / price
+    return round(position_size, 4)
+
 def place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, side, price):
     """Place order with enhanced risk management"""
     try:
