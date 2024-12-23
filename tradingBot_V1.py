@@ -170,19 +170,30 @@ def get_current_price(symbol):
         latest_bar = data_client.get_stock_bars(StockBarsRequest(
             symbol_or_symbols=symbol,
             timeframe=TimeFrame.Minute,
-            start=datetime.now() - timedelta(minutes=5),
-            feed='iex'  # Ensure IEX feed is used
+            start=datetime.now() - timedelta(minutes=10),  # Fetch data for the past 10 minutes
+            feed='iex'
         ))
-        # Validate the presence of data and 'close' column
-        if latest_bar.df.empty or 'close' not in latest_bar.df.columns:
-            logging.error(f"No valid data or 'close' column missing for {symbol}")
-            return None
-        price = float(latest_bar.df['close'].iloc[-1])
-        logging.info(f"Current price for {symbol}: ${price:.2f}")
-        return price
+
+        # Log the raw data for debugging
+        if latest_bar.df.empty:
+            logging.warning(f"Falling back to older data for {symbol}.")
+            fallback_data = data_client.get_stock_bars(StockBarsRequest(
+                symbol_or_symbols=symbol,
+                timeframe=TimeFrame.Minute,
+                start=datetime.now() - timedelta(minutes=15),
+                end=datetime.now() - timedelta(minutes=5),
+                feed='iex'
+            ))
+            if fallback_data.df.empty:
+                logging.error(f"No fallback data available for {symbol}.")
+                return None
+            price = float(fallback_data.df['close'].iloc[-1])
+            logging.info(f"Fallback price for {symbol}: ${price:.2f}")
+            return price
     except Exception as e:
         logging.error(f"Error fetching current price for {symbol}: {e}")
         return None
+
 
 
 # Dynamic Position Sizing
