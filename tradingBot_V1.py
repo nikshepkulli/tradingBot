@@ -337,14 +337,14 @@ def is_market_open():
         return False
 
 def trading_bot():
-    """Main trading bot logic with improved error handling"""
-    symbol = "AAPL"
+    """Main trading bot logic for a list of symbols."""
+    symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"]  # List of stocks to monitor
     risk_percentage = 0.01  # Reduced risk percentage
-    retrain_interval = timedelta(hours=12)  # More frequent retraining
+    retrain_interval = timedelta(hours=12)  # Retrain every 12 hours
     last_trained = None
     confidence_threshold = 0.65  # Adjusted confidence threshold
-    max_positions = 2  # Reduced max positions
-    consecutive_failures = 0
+    max_positions = 2  # Maximum positions
+    consecutive_failures = {symbol: 0 for symbol in symbols}
     max_consecutive_failures = 5
 
     while True:
@@ -355,73 +355,71 @@ def trading_bot():
             if last_trained is None or (now - last_trained) >= retrain_interval:
                 start_date = datetime(2021, 1, 1)
                 end_date = now - timedelta(days=1)
-                historical_data = fetch_historical_data(symbol, start_date, end_date)
-                
-                if not historical_data.empty:
-                    historical_data = prepare_features(historical_data)  # Using new feature preparation
-                    model, scaler = train_enhanced_model(historical_data)
-                    last_trained = now
-                    consecutive_failures = 0
-                else:
-                    logging.error("Failed to fetch historical data for training")
-                    consecutive_failures += 1
+
+                for symbol in symbols:
+                    try:
+                        historical_data = fetch_historical_data(symbol, start_date, end_date)
+                        if not historical_data.empty:
+                            historical_data = prepare_features(historical_data)
+                            model, scaler = train_enhanced_model(historical_data)
+                            last_trained = now
+                            consecutive_failures[symbol] = 0
+                        else:
+                            logging.error(f"Failed to fetch historical data for training: {symbol}")
+                            consecutive_failures[symbol] += 1
+                    except Exception as e:
+                        logging.error(f"Error training model for {symbol}: {e}")
+                        consecutive_failures[symbol] += 1
 
             # Check for too many consecutive failures
-            if consecutive_failures >= max_consecutive_failures:
-                logging.error(f"Too many consecutive failures ({consecutive_failures}). Waiting 15 minutes.")
-                time.sleep(900)  # Wait 15 minutes
-                consecutive_failures = 0
-                continue
+            for symbol in symbols:
+                if consecutive_failures[symbol] >= max_consecutive_failures:
+                    logging.error(f"Too many consecutive failures for {symbol}. Skipping for 15 minutes.")
+                    time.sleep(900)  # Wait 15 minutes
+                    consecutive_failures[symbol] = 0
 
             if is_market_open():
-                price = get_current_price_enhanced(symbol)
-                
-                if price is None:
-                    consecutive_failures += 1
-                    time.sleep(30)  # Reduced wait time
-                    continue
-                
-                consecutive_failures = 0
-                
-                # Get current positions and perform trading logic
-                current_positions = get_current_positions()
-                if len(current_positions) >= max_positions:
-                    logging.info("Maximum position limit reached")
-                    time.sleep(30)
-                    continue
+                for symbol in symbols:
+                    price = get_current_price_enhanced(symbol)
+                    if price is None:
+                        consecutive_failures[symbol] += 1
+                        continue
 
-                # Get live data for prediction
-                live_data = fetch_historical_data(symbol, now - timedelta(days=5), now)
-                if not live_data.empty:
-                    live_data = prepare_features(live_data)
-                    
-                    if all(feature in live_data.columns for feature in model.feature_names_in_):
-                        latest_data = live_data[model.feature_names_in_].iloc[-1:]
-                        latest_scaled = scaler.transform(latest_data)
-                        probabilities = model.predict_proba(latest_scaled)[0]
+                    consecutive_failures[symbol] = 0
+                    current_positions = get_current_positions()
 
-                        logging.info(f"Prediction probabilities - Buy: {probabilities[1]:.4f}, Sell: {probabilities[0]:.4f}")
-                        
-                        balance = get_account_balance()
-                        if probabilities[1] > confidence_threshold:
-                            place_order_with_enhanced_risk_management(
-                                symbol, balance, risk_percentage, OrderSide.BUY, price
-                            )
-                        elif probabilities[0] > confidence_threshold:
-                            place_order_with_enhanced_risk_management(
-                                symbol, balance, risk_percentage, OrderSide.SELL, price
-                            )
+                    if len(current_positions) >= max_positions:
+                        logging.info("Maximum position limit reached")
+                        continue
 
+                    live_data = fetch_historical_data(symbol, now - timedelta(days=5), now)
+                    if not live_data.empty:
+                        live_data = prepare_features(live_data)
+                        if all(feature in live_data.columns for feature in model.feature_names_in_):
+                            latest_data = live_data[model.feature_names_in_].iloc[-1:]
+                            latest_scaled = scaler.transform(latest_data)
+                            probabilities = model.predict_proba(latest_scaled)[0]
+
+                            logging.info(f"{symbol} - Prediction probabilities - Buy: {probabilities[1]:.4f}, Sell: {probabilities[0]:.4f}")
+                            balance = get_account_balance()
+                            if probabilities[1] > confidence_threshold:
+                                place_order_with_enhanced_risk_management(
+                                    symbol, balance, risk_percentage, OrderSide.BUY, price
+                                )
+                            elif probabilities[0] > confidence_threshold:
+                                place_order_with_enhanced_risk_management(
+                                    symbol, balance, risk_percentage, OrderSide.SELL, price
+                                )
             else:
                 logging.info("Market is closed")
                 time.sleep(300)
 
         except Exception as e:
             logging.error(f"Error in main trading loop: {e}")
-            consecutive_failures += 1
             time.sleep(30)
-        
+
         time.sleep(30)  # Reduced main loop wait time
+
 
 if __name__ == "__main__":
     # Create template directory and dashboard.html if they don't exist
