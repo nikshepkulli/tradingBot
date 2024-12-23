@@ -71,7 +71,7 @@ def get_current_price_enhanced(symbol):
                 symbol_or_symbols=[symbol],
                 timeframe=timeframe,
                 start=datetime.now() - timedelta(minutes=window_minutes),
-                feed='sip'  # Ensure correct feed is used
+                feed='iex'  # Ensure correct feed is used
             ))
             if not bars.df.empty and 'close' in bars.df.columns:
                 logging.info(f"Fetched price data for {symbol}: {bars.df.tail()}")
@@ -94,6 +94,7 @@ def get_current_price_enhanced(symbol):
         if price is not None:
             logging.info(f"Successfully fetched price for {symbol} using {timeframe} timeframe: ${price:.2f}")
             return price
+        time.sleep(1)  # Add a delay between API requests
 
     logging.error(f"All price fetch attempts failed for {symbol}")
     return None
@@ -276,9 +277,11 @@ def trading_bot():
 
                         # Trading decision
                         if probabilities[1] > confidence_threshold:
-                            logging.info(f"High confidence BUY signal detected. Placing order.")
+                            logging.info(f"High confidence BUY signal detected ({probabilities[1]*100:.2f}%). Placing order.")
+                            place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, OrderSide.BUY, price)
                         elif probabilities[0] > confidence_threshold:
-                            logging.info(f"High confidence SELL signal detected. Placing order.")
+                            logging.info(f"High confidence SELL signal detected ({probabilities[0]*100:.2f}%). Placing order.")
+                            place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, OrderSide.SELL, price)
 
             else:
                 logging.info("Market is closed")
