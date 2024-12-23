@@ -118,20 +118,25 @@ def fetch_historical_data(symbol, start_date, end_date):
 def add_enhanced_indicators(data):
     """Calculate enhanced technical indicators"""
     try:
+        required_columns = ['volume', 'high', 'low', 'close']
+        missing_columns = [col for col in required_columns if col not in data.columns]
+        if missing_columns:
+            logging.error(f"Missing columns for indicators: {missing_columns}")
+            raise ValueError(f"Missing columns for indicators: {missing_columns}")
+        
         # Basic indicators
         data['rsi'] = ta.momentum.RSIIndicator(close=data['close']).rsi()
         data['ema_10'] = ta.trend.EMAIndicator(close=data['close'], window=10).ema_indicator()
         data['macd'] = ta.trend.MACD(close=data['close']).macd()
         
         # Volume-based indicators
-        if 'volume' in data.columns:
-            data['volume_sma'] = ta.volume.SMAIndicator(close=data['volume'], window=20).sma_indicator()
-            data['vwap'] = ta.volume.VolumeWeightedAveragePrice(
-                high=data['high'],
-                low=data['low'],
-                close=data['close'],
-                volume=data['volume']
-            ).volume_weighted_average_price()
+        data['volume_sma'] = data['volume'].rolling(window=20).mean()
+        data['vwap'] = ta.volume.VolumeWeightedAveragePrice(
+            high=data['high'],
+            low=data['low'],
+            close=data['close'],
+            volume=data['volume']
+        ).volume_weighted_average_price()
         
         # Trend indicators
         data['adx'] = ta.trend.ADXIndicator(
@@ -159,6 +164,7 @@ def add_enhanced_indicators(data):
     except Exception as e:
         logging.error(f"Error adding indicators: {e}")
         raise
+
 
 def train_enhanced_model(data):
     """Train model with enhanced features and cross-validation"""
