@@ -1,50 +1,30 @@
-name: CI/CD for Trading Bot
+name: Deploy to EC2
 
 on:
   push:
     branches:
       - main  # Trigger workflow on push to the main branch
-  pull_request:
-    branches:
-      - main  # Trigger workflow on pull requests to the main branch
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-    # Step 1: Checkout the Code
+    # Step 1: Checkout code
     - name: Checkout code
       uses: actions/checkout@v3
 
-    # Step 2: Set Up Python Environment
-    - name: Set up Python
-      uses: actions/setup-python@v4
+    # Step 2: Set up SSH
+    - name: Set up SSH
+      uses: webfactory/ssh-agent@v0.5.3
       with:
-        python-version: '3.9'
+        ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
 
-    # Step 3: Install Dependencies
-    - name: Install dependencies
+    # Step 3: Deploy code to EC2
+    - name: Deploy to EC2
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-
-    # Step 4: Generate .env File Dynamically
-    - name: Generate .env file
-      run: |
-        echo "ALPACA_API_KEY=${{ secrets.ALPACA_API_KEY }}" >> .env
-        echo "ALPACA_SECRET_KEY=${{ secrets.ALPACA_SECRET_KEY }}" >> .env
-        echo "Generated .env file:"
-        cat .env  # Optional: Output for debugging purposes (remove in production)
-
-    # Step 5: Run the Bot
-    - name: Run Trading Bot
-      run: python your_bot_script.py
-
-    # Optional Step: Archive Logs or Artifacts (if applicable)
-    - name: Upload logs
-      if: failure()
-      uses: actions/upload-artifact@v3
-      with:
-        name: logs
-        path: trading_bot.log
+        ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} << 'EOF'
+          cd /home/ec2-user/tradingBot
+          git pull origin main
+          sudo systemctl restart trading-bot.service
+        EOF

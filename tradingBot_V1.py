@@ -8,6 +8,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from dotenv import load_dotenv
 import ta
 import pandas as pd
 import os
@@ -56,7 +57,10 @@ def add_indicators(data):
         data['rsi'] = ta.momentum.RSIIndicator(close=data['close']).rsi()
         data['ema_10'] = ta.trend.EMAIndicator(close=data['close'], window=10).ema_indicator()
         data['macd'] = ta.trend.MACD(close=data['close']).macd()
-        data['target'] = (data['close'].shift(-1) > data['close']).astype(int)  # Predict if price will go up
+        data['bollinger_high'] = ta.volatility.BollingerBands(close=data['close']).bollinger_hband()
+        data['bollinger_low'] = ta.volatility.BollingerBands(close=data['close']).bollinger_lband()
+        data['atr'] = ta.volatility.AverageTrueRange(high=data['high'], low=data['low'], close=data['close']).average_true_range()
+        data['target'] = (data['close'].shift(-1) > data['close']).astype(int)
         logging.info("Technical indicators added successfully.")
         return data.dropna()
     except Exception as e:
@@ -103,7 +107,7 @@ def is_market_open():
         if clock.is_open:
             logging.info("Market is open.")
             return True
-        logging.info(f"Market closed. Next open: {clock.next_open}, Next close: {clock.next_close}")
+        logging.info(f"Market is closed. Next open: {clock.next_open}, Next close: {clock.next_close}")
         return False
     except Exception as e:
         logging.error(f"Error checking market status: {e}")
@@ -129,7 +133,9 @@ def place_order(symbol, qty, side):
             symbol=symbol,
             qty=qty,
             side=side,
-            time_in_force=TimeInForce.GTC
+            time_in_force=TimeInForce.GTC,
+            stop_loss=stop_loss,
+            take_profit=take_profit
         )
         trading_client.submit_order(order)
         logging.info(f"Order placed: {side} {qty} shares of {symbol}")
@@ -147,7 +153,6 @@ if __name__ == "__main__":
 
     while True:
         now = datetime.now()
-
         # Retrain model if needed
         if last_trained is None or (now - last_trained) >= retrain_interval:
             start_date = datetime(2021, 1, 1)
@@ -158,6 +163,7 @@ if __name__ == "__main__":
             logging.info(f"Model retrained with accuracy: {accuracy:.4f}")
             last_trained = now
 
+        # Check if market is open
         # Check if market is open
         if is_market_open():
             logging.info("Market is open. Fetching live data for trading.")
@@ -176,7 +182,14 @@ if __name__ == "__main__":
             # Prediction and trading logic placeholder
             logging.info("Trading logic based on predictions goes here.")
         else:
-            logging.info("Market is closed. Predictions on historical data only.")
+            logging.info("Market is closed. Skipping trading.")
 
         # Sleep for 10 minutes before next iteration
         time.sleep(600)
+
+
+# Run Flask and Trading Bot in Parallel
+if __name__ == "__main__":
+    bot_thread = threading.Thread(target=trading_bot)
+    bot_thread.start()
+    app.run(host="0.0.0.0", port=5000)
