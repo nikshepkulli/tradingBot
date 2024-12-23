@@ -92,6 +92,17 @@ def fetch_data(symbol, start_date, end_date):
     except Exception as e:
         logging.error(f"Error fetching data for {symbol}: {e}")
         raise
+        
+def get_account_balance():
+    try:
+        account = trading_client.get_account()
+        balance = float(account.cash)  # Retrieve cash balance
+        logging.info(f"Current account balance: ${balance:.2f}")
+        return balance
+    except Exception as e:
+        logging.error(f"Error retrieving account balance: {e}")
+        raise
+
 
 # Add Technical Indicators
 def add_indicators(data):
