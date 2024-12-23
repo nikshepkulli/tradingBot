@@ -229,7 +229,40 @@ def is_market_open():
     except Exception as e:
         logging.error(f"Error checking market status: {e}")
         return False
+        
+def place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, side, price):
+    """Place order with enhanced risk management"""
+    try:
+        if price is None:
+            logging.warning(f"Skipping order for {symbol} due to missing price data.")
+            return
 
+        # Dynamic stop loss and take profit based on volatility
+        volatility = 0.02  # You can calculate this dynamically
+        stop_loss_pct = max(0.01, volatility)
+        take_profit_pct = max(0.02, volatility * 2)
+
+        quantity = calculate_position_size(balance, risk_percentage, price)
+        if quantity <= 0:
+            logging.warning(f"Not enough funds to place an order for {symbol}.")
+            return
+
+        stop_loss = price * (1 - stop_loss_pct) if side == OrderSide.BUY else price * (1 + stop_loss_pct)
+        take_profit = price * (1 + take_profit_pct) if side == OrderSide.BUY else price * (1 - take_profit_pct)
+
+        order = MarketOrderRequest(
+            symbol=symbol,
+            qty=quantity,
+            side=side,
+            time_in_force=TimeInForce.GTC,
+            stop_loss=stop_loss,
+            take_profit=take_profit
+        )
+        
+        trading_client.submit_order(order)
+        logging.info(f"Order placed - Side: {side}, Quantity: {quantity}, Stop Loss: ${stop_loss:.2f}, Take Profit: ${take_profit:.2f}")
+    except Exception as e:
+        logging.error(f"Error placing order: {e}")
 
 def trading_bot():
     """Main trading bot logic"""
