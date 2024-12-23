@@ -1,53 +1,107 @@
 import logging
-import yfinance as yf
-from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest
-from alpaca.trading.enums import OrderSide, TimeInForce
+from flask import Flask, jsonify, render_template
+import threading
+
+# Check if Alpaca is installed, if not, provide guidance
+try:
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+    from alpaca.trading.client import TradingClient
+    from alpaca.trading.requests import MarketOrderRequest
+    from alpaca.trading.enums import OrderSide, TimeInForce
+except ModuleNotFoundError:
+    raise ModuleNotFoundError("Alpaca module not found. Please ensure 'alpaca-trade-api' is installed in your environment.")
+
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from dotenv import load_dotenv
 import ta
 import pandas as pd
-import os
+import numpy as np
 import time
+import os
+
+# Flask app for monitoring
+app = Flask(__name__)
+log_data = []  # Store log entries for the web interface
+
+# Flask Route for the Dashboard
+@app.route("/")
+def dashboard():
+    try:
+        return render_template("dashboard.html", logs=log_data)
+    except Exception as e:
+        logging.error(f"Error rendering dashboard: {e}")
+        return jsonify({"error": "Dashboard template not found"}), 500
+
+# Flask Route for API Logs
+@app.route("/logs")
+def get_logs():
+    return jsonify(log_data)
+
+# Custom logger to capture logs in memory
+class InMemoryLogger(logging.Handler):
+    def emit(self, record):
+        log_entry = self.format(record)
+        log_data.append(log_entry)
+        if len(log_data) > 1000:  # Limit stored logs to 1000 entries
+            log_data.pop(0)
 
 # Load the .env file
 load_dotenv()
 
+# Fetch credentials from environment variables
 API_KEY = os.getenv("ALPACA_API_KEY")
 SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 
 if not API_KEY or not SECRET_KEY:
     raise ValueError("API Key or Secret Key not found in the environment.")
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+# Set up logging
+in_memory_logger = InMemoryLogger()
+in_memory_logger.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[
+    logging.StreamHandler(),
+    logging.FileHandler("enhanced_trading_bot.log"),
+    in_memory_logger
+])
 
-# Example log messages
-logging.info("Logging is configured successfully.")
+# Initialize Alpaca Clients
+data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
+trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
 
-# Initialize Alpaca Trading Client
-trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)  # Use paper=True for testing
-
-
-# Fetch Historical Data using Yahoo Finance
+# Fetch Historical Data with SIP Compliance
 def fetch_data(symbol, start_date, end_date):
     try:
-        df = yf.download(symbol, start=start_date, end=end_date, progress=False)
-        df.reset_index(inplace=True)
-        df.rename(columns={'Adj Close': 'close'}, inplace=True)
+        adjusted_end_date = min(end_date, datetime.now() - timedelta(minutes=15))
+        request_params = StockBarsRequest(
+            symbol_or_symbols=[symbol],
+            timeframe=TimeFrame.Day,
+            start=start_date,
+            end=adjusted_end_date,
+            feed='iex'  # Use IEX feed
+        )
+        bars = data_client.get_stock_bars(request_params)
+        df = bars.df.reset_index()
         df['close'] = df['close'].astype(float)
-        logging.info(f"Fetched {len(df)} rows of data for {symbol} using Yahoo Finance.")
+        logging.info(f"Fetched {len(df)} rows of data for {symbol}. Adjusted end date: {adjusted_end_date}.")
         return df
     except Exception as e:
-        logging.error(f"Error fetching data for {symbol} from Yahoo Finance: {e}")
+        logging.error(f"Error fetching data for {symbol}: {e}")
+        raise
+
+# Get Account balance
+def get_account_balance():
+    try:
+        account = trading_client.get_account()
+        balance = float(account.cash)  # Retrieve cash balance
+        logging.info(f"Current account balance: ${balance:.2f}")
+        return balance
+    except Exception as e:
+        logging.error(f"Error retrieving account balance: {e}")
         raise
 
 
@@ -67,40 +121,37 @@ def add_indicators(data):
         logging.error(f"Error adding indicators: {e}")
         raise
 
-
 # Train ML Model
 def train_model(data):
     try:
-        # Features and target column
-        features = ['rsi', 'ema_10', 'macd']
+        features = ['rsi', 'ema_10', 'macd', 'bollinger_high', 'bollinger_low', 'atr']
         target = 'target'
 
-        # Extract features and target
-        X = data[features]
-        y = data[target].values.ravel()  # Ensure y is 1-dimensional
+        # Validate required columns
+        missing_features = [col for col in features if col not in data.columns]
+        if missing_features:
+            raise ValueError(f"Missing required features for training: {missing_features}")
+        if target not in data.columns:
+            raise ValueError("Target column 'target' is missing from the dataset.")
 
-        # Scale features
+        X = data[features]
+        y = data[target]
+
         scaler = MinMaxScaler()
         X_scaled = scaler.fit_transform(X)
 
-        # Train-test split
         X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
-        # Train the model
         model = RandomForestClassifier()
         model.fit(X_train, y_train)
-
-        # Evaluate model accuracy
         accuracy = model.score(X_test, y_test)
         logging.info(f"Model trained successfully with accuracy: {accuracy:.4f}")
-        return model, scaler, accuracy
+        return model, scaler
     except Exception as e:
         logging.error(f"Error training model: {e}")
         raise
 
-
-
-# Check if Market is Open
+# Check if the market is open
 def is_market_open():
     try:
         clock = trading_client.get_clock()
@@ -113,78 +164,169 @@ def is_market_open():
         logging.error(f"Error checking market status: {e}")
         raise
 
-
-# Get Account Balance
-def get_account_balance():
+# Get Current Price
+def get_current_price(symbol):
     try:
-        account = trading_client.get_account()
-        cash_balance = float(account.cash)
-        logging.info(f"Current cash balance: ${cash_balance:.2f}")
-        return cash_balance
+        # Primary request for recent data
+        latest_bar = data_client.get_stock_bars(StockBarsRequest(
+            symbol_or_symbols=symbol,
+            timeframe=TimeFrame.Minute,
+            start=datetime.now() - timedelta(minutes=5),
+            feed='iex'
+        ))
+        
+        if latest_bar.df.empty or 'close' not in latest_bar.df.columns:
+            logging.warning(f"Falling back to older data for {symbol}.")
+            
+            # Fallback request with a larger time window
+            fallback_data = data_client.get_stock_bars(StockBarsRequest(
+                symbol_or_symbols=symbol,
+                timeframe=TimeFrame.Minute,
+                start=datetime.now() - timedelta(minutes=30),
+                end=datetime.now() - timedelta(minutes=5),
+                feed='iex'
+            ))
+            
+            if fallback_data.df.empty or 'close' not in fallback_data.df.columns:
+                logging.error(f"No fallback data available for {symbol}.")
+                return None
+            
+            # Return the last available price in the fallback range
+            price = float(fallback_data.df['close'].iloc[-1])
+            logging.info(f"Fallback price for {symbol}: ${price:.2f}")
+            return price
+        
+        # Return the most recent price
+        price = float(latest_bar.df['close'].iloc[-1])
+        logging.info(f"Current price for {symbol}: ${price:.2f}")
+        return price
     except Exception as e:
-        logging.error(f"Error fetching account balance: {e}")
-        raise
+        logging.error(f"Error fetching current price for {symbol}: {e}")
+        return None
 
+# Dynamic Position Sizing
+def calculate_position_size(balance, risk_percentage, price):
+    position_size = (balance * risk_percentage) / price
+    return round(position_size, 4)
 
-# Place Order with Alpaca API
-def place_order(symbol, qty, side):
+# Place Order with Stop-Loss and Take-Profit
+def place_order_with_risk_management(symbol, balance, risk_percentage, side, price, stop_loss_pct=0.02, take_profit_pct=0.05):
     try:
+        if price is None:
+            logging.warning(f"Skipping order for {symbol} due to missing price data.")
+            return
+
+        quantity = calculate_position_size(balance, risk_percentage, price)
+        if quantity <= 0:
+            logging.warning(f"Not enough funds to place an order for {symbol}.")
+            return
+
+        stop_loss = price * (1 - stop_loss_pct) if side == OrderSide.BUY else price * (1 + stop_loss_pct)
+        take_profit = price * (1 + take_profit_pct) if side == OrderSide.BUY else price * (1 - take_profit_pct)
+
         order = MarketOrderRequest(
             symbol=symbol,
-            qty=qty,
+            qty=quantity,
             side=side,
             time_in_force=TimeInForce.GTC,
             stop_loss=stop_loss,
             take_profit=take_profit
         )
         trading_client.submit_order(order)
-        logging.info(f"Order placed: {side} {qty} shares of {symbol}")
+        logging.info(f"Order placed with Stop Loss: {stop_loss}, Take Profit: {take_profit}")
     except Exception as e:
-        logging.error(f"Error placing order for {symbol}: {e}")
-        raise
+        logging.error(f"Error placing order with risk management for {symbol}: {e}")
 
-
-# Main Function
-if __name__ == "__main__":
-    stock_symbol = "NVDA"  # NVIDIA stock symbol
-    budget = 50  # Budget per trade
-    retrain_interval = timedelta(days=1)  # Retrain every 1 day
+# Trading Bot Main Logic
+def trading_bot():
+    stock_symbol = "AAPL"
+    risk_percentage = 0.02  # Risk 2% of account balance per trade
+    retrain_interval = timedelta(days=1)
     last_trained = None
 
     while True:
         now = datetime.now()
         # Retrain model if needed
-        if last_trained is None or (now - last_trained) >= retrain_interval:
-            start_date = datetime(2021, 1, 1)
-            end_date = now - timedelta(days=1)
-            historical_data = fetch_data(stock_symbol, start_date, end_date)
-            historical_data = add_indicators(historical_data)
-            model, scaler, accuracy = train_model(historical_data)
-            logging.info(f"Model retrained with accuracy: {accuracy:.4f}")
-            last_trained = now
+        try:
+            if last_trained is None or (now - last_trained) >= retrain_interval:
+                start_date = datetime(2021, 1, 1)
+                end_date = now - timedelta(days=1)
+                historical_data = fetch_data(stock_symbol, start_date, end_date)
+                if historical_data.empty:
+                    logging.warning(f"No historical data available for {stock_symbol}. Skipping retraining.")
+                    time.sleep(600)
+                    continue
+                historical_data = add_indicators(historical_data)
+                if historical_data.empty:
+                    logging.warning(f"Insufficient historical data after adding indicators for {stock_symbol}. Skipping retraining.")
+                    time.sleep(600)
+                    continue
+                model, scaler = train_model(historical_data)
+                last_trained = now
+        except Exception as e:
+            logging.error(f"Error during model retraining: {e}")
+            time.sleep(600)
+            continue
 
-        # Check if market is open
         # Check if market is open
         if is_market_open():
             logging.info("Market is open. Fetching live data for trading.")
-
-            # Fetch live data
-            live_data_start = now - timedelta(days=7)
-            live_data_end = now
             try:
-                live_data = fetch_data(stock_symbol, live_data_start, live_data_end)
-                live_data = add_indicators(live_data)
-                logging.info(f"Live data fetched successfully.")
-            except Exception as e:
-                logging.warning(f"Skipping trading due to live data error: {e}")
-                continue
+                # Extend the live data fetch window to ensure sufficient rows
+                live_data = fetch_data(stock_symbol, now - timedelta(days=60), now)
+                if live_data.empty:
+                    logging.warning(f"No live data available for {stock_symbol}. Skipping this iteration.")
+                    time.sleep(600)
+                    continue
 
-            # Prediction and trading logic placeholder
-            logging.info("Trading logic based on predictions goes here.")
+                logging.info(f"Live data shape: {live_data.shape}")
+                if len(live_data) < 14:  # Ensure sufficient rows for indicators
+                    logging.warning(f"Insufficient live data rows: {len(live_data)} rows fetched, minimum 14 required.")
+                    time.sleep(600)
+                    continue
+
+                live_data = add_indicators(live_data)
+                if live_data.empty:
+                    logging.warning(f"Insufficient live data after adding indicators for {stock_symbol}. Skipping this iteration.")
+                    time.sleep(600)
+                    continue
+
+                # Predict and place orders
+                features = ['rsi', 'ema_10', 'macd', 'bollinger_high', 'bollinger_low', 'atr']
+                if not all(feature in live_data.columns for feature in features):
+                    missing_features = [feature for feature in features if feature not in live_data.columns]
+                    logging.warning(f"Missing features in live data: {missing_features}. Skipping this iteration.")
+                    time.sleep(600)
+                    continue
+
+                # Fetch the current price once
+                price = get_current_price(stock_symbol)
+                if price is None:
+                    logging.warning(f"Skipping trading for {stock_symbol} due to missing price data.")
+                    time.sleep(600)
+                    continue
+
+                # Process predictions
+                live_data_scaled = scaler.transform(live_data[features])
+                probabilities = model.predict_proba(live_data_scaled)
+
+                for i, prob in enumerate(probabilities):
+                    confidence_buy = prob[1] > 0.6  # Adjusted confidence threshold
+                    confidence_sell = prob[0] > 0.6
+
+                    balance = get_account_balance()
+                    if confidence_buy:
+                        logging.info(f"High confidence buy signal: {prob[1]*100:.2f}% for {stock_symbol}")
+                        place_order_with_risk_management(stock_symbol, balance, risk_percentage, OrderSide.BUY, price=price)
+                    elif confidence_sell:
+                        logging.info(f"High confidence sell signal: {prob[0]*100:.2f}% for {stock_symbol}")
+                        place_order_with_risk_management(stock_symbol, balance, risk_percentage, OrderSide.SELL, price=price)
+            except Exception as e:
+                logging.error(f"Error during live trading: {e}")
         else:
             logging.info("Market is closed. Skipping trading.")
 
-        # Sleep for 10 minutes before next iteration
+        # Sleep before next iteration
         time.sleep(600)
 
 
