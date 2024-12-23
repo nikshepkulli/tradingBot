@@ -71,7 +71,7 @@ def get_current_price_enhanced(symbol):
                 symbol_or_symbols=[symbol],
                 timeframe=timeframe,
                 start=datetime.now() - timedelta(minutes=window_minutes),
-                feed='iex'  # Ensure correct feed is used
+                feed='sip'  # Ensure correct feed is used
             ))
             if not bars.df.empty and 'close' in bars.df.columns:
                 logging.info(f"Fetched price data for {symbol}: {bars.df.tail()}")
@@ -107,7 +107,7 @@ def fetch_historical_data(symbol, start_date, end_date):
             timeframe=TimeFrame.Day,
             start=start_date,
             end=adjusted_end_date,
-            feed='iex'
+            feed='sip'
         )
         bars = data_client.get_stock_bars(request_params)
         df = bars.df.reset_index()
