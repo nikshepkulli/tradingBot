@@ -379,6 +379,72 @@ def trading_bot():
         time.sleep(60)
 
 
+@app.route("/performance")
+def performance_dashboard():
+    """Bot performance dashboard"""
+    try:
+        return render_template("performance.html", logs=log_data)
+    except Exception as e:
+        logging.error(f"Error rendering performance dashboard: {e}")
+        return jsonify({"error": "Performance dashboard template not found"}), 500
+        
+@app.route("/profit_loss")
+def profit_loss_dashboard():
+    """Profit and loss tracking dashboard"""
+    try:
+        trades = get_trade_history()
+        return render_template("profit_loss.html", trades=trades, total_profit_loss=calculate_total_profit_loss(trades))
+    except Exception as e:
+        logging.error(f"Error rendering profit/loss dashboard: {e}")
+        return jsonify({"error": "Profit/Loss dashboard template not found"}), 500
+
+trade_history = []  # Store trade history (can also be fetched from a database)
+
+def record_trade(asset, side, qty, filled_price):
+    """Record a trade in the history"""
+    trade_history.append({
+        "asset": asset,
+        "side": side,
+        "qty": qty,
+        "filled_price": filled_price,
+        "timestamp": datetime.now()
+    })
+
+def get_trade_history():
+    """Return the trade history"""
+    return trade_history
+
+def calculate_total_profit_loss(trades):
+    """Calculate the total profit/loss from trade history"""
+    stock_positions = {}
+    total_profit_loss = 0.0
+
+    for trade in trades:
+        symbol = trade["asset"]
+        qty = float(trade["qty"])
+        price = float(trade["filled_price"])
+        side = trade["side"]
+
+        if side == "buy":
+            # Add to stock position
+            if symbol not in stock_positions:
+                stock_positions[symbol] = {"qty": 0, "cost": 0.0}
+            stock_positions[symbol]["qty"] += qty
+            stock_positions[symbol]["cost"] += price * qty
+        elif side == "sell":
+            # Calculate profit/loss for the sold shares
+            if symbol in stock_positions and stock_positions[symbol]["qty"] >= qty:
+                avg_cost = stock_positions[symbol]["cost"] / stock_positions[symbol]["qty"]
+                profit = (price - avg_cost) * qty
+                total_profit_loss += profit
+
+                # Update stock position
+                stock_positions[symbol]["qty"] -= qty
+                stock_positions[symbol]["cost"] -= avg_cost * qty
+
+    return total_profit_loss
+
+
 # Run Flask and Trading Bot
 if __name__ == "__main__":
     bot_thread = threading.Thread(target=trading_bot)
