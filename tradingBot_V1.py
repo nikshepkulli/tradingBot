@@ -141,7 +141,7 @@ def fetch_historical_data(symbol, start_date, end_date):
                 raise
 
 def add_enhanced_indicators(data):
-    """Calculate enhanced technical indicators with predictive features"""
+    """Calculate enhanced technical indicators with corrected momentum features"""
     try:
         # Core price indicators
         data['ema_20'] = ta.trend.ema_indicator(data['close'], 20)
@@ -152,11 +152,12 @@ def add_enhanced_indicators(data):
         data['adx'] = ta.trend.adx(data['high'], data['low'], data['close'])
         data['trend_strength'] = np.where(data['ema_20'] > data['ema_50'], data['adx'], -data['adx'])
         
-        # Momentum
+        # Momentum indicators
         data['rsi'] = ta.momentum.rsi(data['close'])
         data['rsi_slope'] = data['rsi'].diff(3)
         data['macd'] = ta.trend.macd_diff(data['close'])
-        data['mom'] = ta.momentum.momentum(data['close'])
+        data['roc'] = ta.momentum.roc(data['close'])  # Rate of Change instead of momentum
+        data['williams_r'] = ta.momentum.williams_r(data['high'], data['low'], data['close'])
         
         # Volatility
         bb = ta.volatility.BollingerBands(data['close'])
@@ -173,9 +174,9 @@ def add_enhanced_indicators(data):
         data['lower_low'] = (data['low'] < data['low'].shift(1)).astype(int)
         
         # Target variable with dynamic thresholds
-        returns = data['close'].pct_change(5)  # 5-period returns
+        returns = data['close'].pct_change(5)
         volatility = returns.rolling(20).std()
-        threshold = volatility * 1.5  # Dynamic threshold based on volatility
+        threshold = volatility * 1.5
         
         data['target'] = np.where(returns.shift(-5) > threshold, 1, 0)
         
