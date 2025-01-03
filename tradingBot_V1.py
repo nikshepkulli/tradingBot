@@ -141,123 +141,124 @@ def fetch_historical_data(symbol, start_date, end_date):
                 raise
 
 def add_enhanced_indicators(data):
-    """Calculate enhanced technical indicators"""
+    """Calculate enhanced technical indicators with predictive features"""
     try:
-        required_columns = ['volume', 'high', 'low', 'close']
-        missing_columns = [col for col in required_columns if col not in data.columns]
-        if missing_columns:
-            logging.error(f"Missing columns for indicators: {missing_columns}")
-            raise ValueError(f"Missing columns for indicators: {missing_columns}")
+        # Core price indicators
+        data['ema_20'] = ta.trend.ema_indicator(data['close'], 20)
+        data['ema_50'] = ta.trend.ema_indicator(data['close'], 50)
+        data['sma_200'] = ta.trend.sma_indicator(data['close'], 200)
         
-        # Basic indicators
-        data['rsi'] = ta.momentum.RSIIndicator(close=data['close']).rsi()
-        data['ema_10'] = ta.trend.EMAIndicator(close=data['close'], window=10).ema_indicator()
-        data['macd'] = ta.trend.MACD(close=data['close']).macd()
+        # Trend strength
+        data['adx'] = ta.trend.adx(data['high'], data['low'], data['close'])
+        data['trend_strength'] = np.where(data['ema_20'] > data['ema_50'], data['adx'], -data['adx'])
         
-        # Volume-based indicators
-        data['volume_sma'] = data['volume'].rolling(window=20).mean()
-        data['vwap'] = ta.volume.VolumeWeightedAveragePrice(
-            high=data['high'],
-            low=data['low'],
-            close=data['close'],
-            volume=data['volume']
-        ).volume_weighted_average_price()
+        # Momentum
+        data['rsi'] = ta.momentum.rsi(data['close'])
+        data['rsi_slope'] = data['rsi'].diff(3)
+        data['macd'] = ta.trend.macd_diff(data['close'])
+        data['mom'] = ta.momentum.momentum(data['close'])
         
-        # Trend indicators
-        data['adx'] = ta.trend.ADXIndicator(
-            high=data['high'],
-            low=data['low'],
-            close=data['close']
-        ).adx()
+        # Volatility
+        bb = ta.volatility.BollingerBands(data['close'])
+        data['bb_width'] = (bb.bollinger_hband() - bb.bollinger_lband()) / data['close']
+        data['atr'] = ta.volatility.average_true_range(data['high'], data['low'], data['close'])
         
-        # Volatility indicators
-        bb = ta.volatility.BollingerBands(close=data['close'])
-        data['bb_high'] = bb.bollinger_hband()
-        data['bb_low'] = bb.bollinger_lband()
-        data['bb_width'] = (data['bb_high'] - data['bb_low']) / data['close']
+        # Volume analysis
+        data['obv'] = ta.volume.on_balance_volume(data['close'], data['volume'])
+        data['volume_sma'] = data['volume'].rolling(20).mean()
+        data['volume_ratio'] = data['volume'] / data['volume_sma']
         
-        # Custom features
-        data['price_range'] = (data['high'] - data['low']) / data['close']
-        data['returns'] = data['close'].pct_change()
-        data['volatility'] = data['returns'].rolling(window=20).std()
+        # Price patterns
+        data['higher_high'] = (data['high'] > data['high'].shift(1)).astype(int)
+        data['lower_low'] = (data['low'] < data['low'].shift(1)).astype(int)
         
-        # Target variable
-        returns_threshold = 0.001
-        data['target'] = ((data['close'].shift(-1) - data['close']) / data['close'] > returns_threshold).astype(int)
+        # Target variable with dynamic thresholds
+        returns = data['close'].pct_change(5)  # 5-period returns
+        volatility = returns.rolling(20).std()
+        threshold = volatility * 1.5  # Dynamic threshold based on volatility
+        
+        data['target'] = np.where(returns.shift(-5) > threshold, 1, 0)
         
         return data.dropna()
+        
     except Exception as e:
-        logging.error(f"Error adding indicators: {e}")
+        logging.error(f"Error in indicators: {e}")
         raise
-
 
 # Enhanced model training function with cross-validation and hyperparameter tuning
 def train_enhanced_model(data):
-    """Train model with cross-validation and advanced feature engineering"""
+    """Train model with improved class balance and feature selection"""
     try:
-        # Additional technical indicators
         features = [
-            'rsi', 'ema_10', 'macd', 'bb_high', 'bb_low', 'bb_width',
-            'adx', 'vwap', 'volume_sma', 'price_range', 'volatility',
-            'rsi_slope', 'volume_ratio', 'price_momentum', 'trend_strength'
+            'ema_20', 'ema_50', 'sma_200', 'trend_strength', 
+            'rsi', 'rsi_slope', 'macd', 'mom',
+            'bb_width', 'atr', 'obv', 'volume_ratio',
+            'higher_high', 'lower_low'
         ]
-        
-        # Add momentum and trend features
-        data['rsi_slope'] = data['rsi'].diff(3)
-        data['volume_ratio'] = data['volume'] / data['volume'].rolling(10).mean()
-        data['price_momentum'] = data['close'].pct_change(5)
-        data['trend_strength'] = data['adx'] * (1 if data['ema_10'].iloc[-1] > data['close'].iloc[-1] else -1)
         
         X = data[features]
         y = data['target']
 
-        # Enhanced scaling with outlier handling
-        from sklearn.preprocessing import RobustScaler
-        scaler = RobustScaler()
-        X_scaled = scaler.fit_transform(X)
-        
-        # Time-based split for financial data
+        # Handle class imbalance
+        from imblearn.over_sampling import SMOTE
+        from imblearn.under_sampling import RandomUnderSampler
+        from imblearn.pipeline import Pipeline
+
+        # Two-step sampling strategy
+        over = SMOTE(sampling_strategy=0.8)
+        under = RandomUnderSampler(sampling_strategy=0.9)
+        steps = [('o', over), ('u', under)]
+        pipeline = Pipeline(steps=steps)
+
+        # Train/test split with time-based split
         train_size = int(len(data) * 0.8)
-        X_train = X_scaled[:train_size]
-        X_test = X_scaled[train_size:]
+        X_train = X[:train_size]
+        X_test = X[train_size:]
         y_train = y[:train_size]
         y_test = y[train_size:]
-
-        # Hyperparameter optimization
-        from sklearn.model_selection import GridSearchCV
-        param_grid = {
-            'n_estimators': [200, 300],
-            'max_depth': [8, 10, 12],
-            'min_samples_split': [8, 10, 12],
-            'min_samples_leaf': [4, 5, 6],
-            'class_weight': ['balanced', 'balanced_subsample']
-        }
         
-        base_model = RandomForestClassifier(random_state=42)
-        grid_search = GridSearchCV(
-            base_model, 
-            param_grid,
-            cv=5,
-            scoring='f1',
+        # Resample training data
+        X_resampled, y_resampled = pipeline.fit_resample(X_train, y_train)
+        
+        # Scale features
+        scaler = RobustScaler()
+        X_resampled_scaled = scaler.fit_transform(X_resampled)
+        X_test_scaled = scaler.transform(X_test)
+        
+        # Enhanced Random Forest with optimized parameters
+        model = RandomForestClassifier(
+            n_estimators=300,
+            max_depth=8,
+            min_samples_split=8,
+            min_samples_leaf=6,
+            class_weight='balanced_subsample',
+            random_state=42,
             n_jobs=-1
         )
         
-        grid_search.fit(X_train, y_train)
-        best_model = grid_search.best_estimator_
+        # Train with resampled data
+        model.fit(X_resampled_scaled, y_resampled)
         
-        # Calculate various metrics
-        from sklearn.metrics import precision_score, recall_score, f1_score
-        y_pred = best_model.predict(X_test)
+        # Evaluate
+        y_pred = model.predict(X_test_scaled)
         precision = precision_score(y_test, y_pred)
         recall = recall_score(y_test, y_pred)
         f1 = f1_score(y_test, y_pred)
         
         logging.info(f"Model metrics - Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
-        logging.info(f"Best parameters: {grid_search.best_params_}")
         
-        return best_model, scaler
+        # Feature importance analysis
+        importances = pd.DataFrame({
+            'feature': features,
+            'importance': model.feature_importances_
+        }).sort_values('importance', ascending=False)
+        
+        logging.info("\nTop features:\n" + importances.head().to_string())
+        
+        return model, scaler
+        
     except Exception as e:
-        logging.error(f"Error in enhanced model training: {e}")
+        logging.error(f"Error in model training: {e}")
         raise
 
 def is_market_open():
