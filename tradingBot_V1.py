@@ -181,52 +181,53 @@ def add_enhanced_indicators(data):
         raise
 
 
-def train_enhanced_model(data):
-    """Train model with enhanced features and cross-validation"""
+def train_and_evaluate_model(data):
+    """Train the model with validation and feature importance tracking."""
     try:
-        features = [
-            'rsi', 'ema_10', 'macd', 'bb_high', 'bb_low', 'bb_width',
-            'adx', 'vwap', 'volume_sma', 'price_range', 'volatility'
-        ]
-        
+        features = ['rsi', 'ema_10', 'macd', 'bb_high', 'bb_low', 'bb_width', 'adx', 'vwap', 'volume_sma', 'price_range', 'volatility']
         X = data[features]
         y = data['target']
 
         scaler = MinMaxScaler()
         X_scaled = scaler.fit_transform(X)
-        
-        train_size = int(len(data) * 0.8)
-        X_train = X_scaled[:train_size]
-        X_test = X_scaled[train_size:]
-        y_train = y[:train_size]
-        y_test = y[train_size:]
 
-        model = RandomForestClassifier(
-            n_estimators=200,
-            max_depth=10,
-            min_samples_split=10,
-            min_samples_leaf=5,
-            random_state=42,
-            class_weight='balanced'
-        )
-        
-        model.fit(X_train, y_train)
-        
-        train_accuracy = model.score(X_train, y_train)
-        test_accuracy = model.score(X_test, y_test)
-        
+        # Split data into train, validation, and test sets
+        train_size = 0.7
+        val_size = 0.15
+        test_size = 0.15
+        X_train, X_temp, y_train, y_temp = train_test_split(X_scaled, y, test_size=(1-train_size), random_state=42)
+        X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=(test_size/(test_size + val_size)), random_state=42)
+
+        # Hyperparameter tuning
+        param_grid = {
+            'n_estimators': [100, 200, 300],
+            'max_depth': [10, 20, None],
+            'min_samples_split': [2, 5, 10],
+            'min_samples_leaf': [1, 2, 4],
+            'class_weight': ['balanced', None]
+        }
+        grid_search = GridSearchCV(RandomForestClassifier(random_state=42), param_grid, cv=3, scoring='accuracy')
+        grid_search.fit(X_train, y_train)
+        best_model = grid_search.best_estimator_
+
+        # Evaluate model performance
+        train_accuracy = best_model.score(X_train, y_train)
+        val_accuracy = best_model.score(X_val, y_val)
+        test_accuracy = best_model.score(X_test, y_test)
+        logging.info(f"Model Performance: Train Accuracy = {train_accuracy:.4f}, Validation Accuracy = {val_accuracy:.4f}, Test Accuracy = {test_accuracy:.4f}")
+
+        # Log feature importance
         feature_importance = pd.DataFrame({
-            'feature': features,
-            'importance': model.feature_importances_
-        }).sort_values('importance', ascending=False)
-        
-        logging.info(f"Model trained successfully. Train accuracy: {train_accuracy:.4f}, Test accuracy: {test_accuracy:.4f}")
-        logging.info("\nTop 5 important features:\n" + feature_importance.head().to_string())
-        
-        return model, scaler
+            'Feature': features,
+            'Importance': best_model.feature_importances_
+        }).sort_values(by='Importance', ascending=False)
+        logging.info("Feature Importance:\n" + feature_importance.to_string(index=False))
+
+        return best_model, scaler
     except Exception as e:
-        logging.error(f"Error training model: {e}")
-        raise
+        logging.error(f"Error during model training: {e}")
+        return None, None
+
 
 def is_market_open():
     """Check if the market is open"""
@@ -332,7 +333,7 @@ def trading_bot():
                     historical_data = fetch_historical_data(symbol, start_date, end_date)
                     if not historical_data.empty:
                         historical_data = add_enhanced_indicators(historical_data)
-                        model, scaler = train_enhanced_model(historical_data)
+                        model, scaler = train_and_evaluate_model(historical_data)
                         last_trained[symbol] = now
 
                 # Check if market is open
