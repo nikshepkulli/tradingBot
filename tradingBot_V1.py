@@ -188,11 +188,11 @@ def add_enhanced_indicators(data):
 
 # Enhanced model training function with cross-validation and hyperparameter tuning
 def train_enhanced_model(data):
-    """Train model with improved class balance and feature selection"""
+    """Train model with aligned feature set"""
     try:
         features = [
             'ema_20', 'ema_50', 'sma_200', 'trend_strength', 
-            'rsi', 'rsi_slope', 'macd', 'mom',
+            'rsi', 'rsi_slope', 'macd', 'roc', 'williams_r',
             'bb_width', 'atr', 'obv', 'volume_ratio',
             'higher_high', 'lower_low'
         ]
@@ -205,28 +205,22 @@ def train_enhanced_model(data):
         from imblearn.under_sampling import RandomUnderSampler
         from imblearn.pipeline import Pipeline
 
-        # Two-step sampling strategy
         over = SMOTE(sampling_strategy=0.8)
         under = RandomUnderSampler(sampling_strategy=0.9)
-        steps = [('o', over), ('u', under)]
-        pipeline = Pipeline(steps=steps)
+        pipeline = Pipeline([('o', over), ('u', under)])
 
-        # Train/test split with time-based split
         train_size = int(len(data) * 0.8)
         X_train = X[:train_size]
         X_test = X[train_size:]
         y_train = y[:train_size]
         y_test = y[train_size:]
         
-        # Resample training data
         X_resampled, y_resampled = pipeline.fit_resample(X_train, y_train)
         
-        # Scale features
         scaler = RobustScaler()
         X_resampled_scaled = scaler.fit_transform(X_resampled)
         X_test_scaled = scaler.transform(X_test)
         
-        # Enhanced Random Forest with optimized parameters
         model = RandomForestClassifier(
             n_estimators=300,
             max_depth=8,
@@ -237,10 +231,8 @@ def train_enhanced_model(data):
             n_jobs=-1
         )
         
-        # Train with resampled data
         model.fit(X_resampled_scaled, y_resampled)
         
-        # Evaluate
         y_pred = model.predict(X_test_scaled)
         precision = precision_score(y_test, y_pred)
         recall = recall_score(y_test, y_pred)
@@ -248,20 +240,12 @@ def train_enhanced_model(data):
         
         logging.info(f"Model metrics - Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
         
-        # Feature importance analysis
-        importances = pd.DataFrame({
-            'feature': features,
-            'importance': model.feature_importances_
-        }).sort_values('importance', ascending=False)
-        
-        logging.info("\nTop features:\n" + importances.head().to_string())
-        
         return model, scaler
         
     except Exception as e:
         logging.error(f"Error in model training: {e}")
         raise
-
+        
 def is_market_open():
     """Check if the market is open"""
     try:
