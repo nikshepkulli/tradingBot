@@ -19,26 +19,19 @@ import os
 
 # Flask app setup
 app = Flask(__name__)
-log_data_lock = threading.Lock()
 log_data = []  # Store log entries for the web interface
 
 @app.route("/")
 def dashboard():
-    with log_data_lock:
-        logs = list(log_data)  # Make a copy to avoid thread issues
-    return render_template("dashboard.html", logs=logs)
+    try:
+        return render_template("dashboard.html", logs=log_data)
+    except Exception as e:
+        logging.error(f"Error rendering dashboard: {e}")
+        return jsonify({"error": "Dashboard template not found"}), 500
 
-
-@app.route("/")
-def dashboard():
-    with log_data_lock:
-        logs = list(log_data)  # Make a copy to avoid thread issues
-    return render_template("dashboard.html", logs=logs)
-
-@app.route("/test_logging")
-def test_logging():
-    logging.info("Test log entry added!")
-    return jsonify({"status": "Log entry added"})
+@app.route("/logs")
+def get_logs():
+    return jsonify(log_data)
 
 # Custom logger
 class InMemoryLogger(logging.Handler):
@@ -68,26 +61,6 @@ if not API_KEY or not SECRET_KEY:
 # Initialize Alpaca clients
 data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
 trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
-
-def safe_execute(function, *args, **kwargs):
-    """Execute a function safely with error handling."""
-    try:
-        return function(*args, **kwargs)
-    except Exception as e:
-        logging.error(f"Error in {function.__name__}: {e}")
-        return None
-
-def retry_with_backoff(function, retries=3, backoff_factor=2, *args, **kwargs):
-    """Retry a function with exponential backoff."""
-    for attempt in range(retries):
-        try:
-            return function(*args, **kwargs)
-        except Exception as e:
-            wait_time = backoff_factor ** attempt
-            logging.warning(f"Retrying {function.__name__} in {wait_time}s due to error: {e}")
-            time.sleep(wait_time)
-    logging.error(f"All retries failed for {function.__name__}")
-    return None
 
 def get_current_price_enhanced(symbol):
     """Enhanced price fetching with multiple fallback strategies"""
@@ -158,22 +131,18 @@ def fetch_historical_data(symbol, start_date, end_date):
         raise
 
 def add_enhanced_indicators(data):
-    """Calculate enhanced technical indicators."""
-    required_columns = ['volume', 'high', 'low', 'close']
-    missing_columns = [col for col in required_columns if col not in data.columns]
-    if missing_columns:
-        raise ValueError(f"Missing columns for indicators: {missing_columns}")
-
-    data['rsi'] = ta.momentum.RSIIndicator(close=data['close']).rsi()
-    data['ema_10'] = ta.trend.EMAIndicator(close=data['close'], window=10).ema_indicator()
-    data['macd'] = ta.trend.MACD(close=data['close']).macd()
-    data['bb_high'] = ta.volatility.BollingerBands(close=data['close']).bollinger_hband()
-    data['bb_low'] = ta.volatility.BollingerBands(close=data['close']).bollinger_lband()
-    data['adx'] = ta.trend.ADXIndicator(high=data['high'], low=data['low'], close=data['close']).adx()
-    data['price_range'] = (data['high'] - data['low']) / data['close']
-    data['returns'] = data['close'].pct_change()
-    data['volatility'] = data['returns'].rolling(window=20).std()
-    data['target'] = ((data['close'].shift(-1) - data['close']) > 0).astype(int)
+    """Calculate enhanced technical indicators"""
+    try:
+        required_columns = ['volume', 'high', 'low', 'close']
+        missing_columns = [col for col in required_columns if col not in data.columns]
+        if missing_columns:
+            logging.error(f"Missing columns for indicators: {missing_columns}")
+            raise ValueError(f"Missing columns for indicators: {missing_columns}")
+        
+        # Basic indicators
+        data['rsi'] = ta.momentum.RSIIndicator(close=data['close']).rsi()
+        data['ema_10'] = ta.trend.EMAIndicator(close=data['close'], window=10).ema_indicator()
+        data['macd'] = ta.trend.MACD(close=data['close']).macd()
         
         # Volume-based indicators
         data['volume_sma'] = data['volume'].rolling(window=20).mean()
@@ -213,32 +182,48 @@ def add_enhanced_indicators(data):
 
 
 def train_enhanced_model(data):
-    """Train model with hyperparameter tuning."""
-    features = ['rsi', 'ema_10', 'macd', 'bb_high', 'bb_low', 'adx', 'price_range', 'volatility']
-    X = data[features]
-    y = data['target']
+    """Train model with enhanced features and cross-validation"""
+    try:
+        features = [
+            'rsi', 'ema_10', 'macd', 'bb_high', 'bb_low', 'bb_width',
+            'adx', 'vwap', 'volume_sma', 'price_range', 'volatility'
+        ]
+        
+        X = data[features]
+        y = data['target']
 
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
-    scaler = MinMaxScaler().fit(X_train)
-    X_train_scaled = scaler.transform(X_train)
-    X_val_scaled = scaler.transform(X_val)
+        scaler = MinMaxScaler()
+        X_scaled = scaler.fit_transform(X)
+        
+        train_size = int(len(data) * 0.8)
+        X_train = X_scaled[:train_size]
+        X_test = X_scaled[train_size:]
+        y_train = y[:train_size]
+        y_test = y[train_size:]
 
-    param_grid = {
-        'n_estimators': [100, 200],
-        'max_depth': [10, 20, None],
-        'min_samples_split': [2, 5],
-        'min_samples_leaf': [1, 2]
-    }
-
-    grid_search = GridSearchCV(RandomForestClassifier(random_state=42), param_grid, cv=3, scoring='accuracy')
-    grid_search.fit(X_train_scaled, y_train)
-
-    model = grid_search.best_estimator_
-    train_accuracy = model.score(X_train_scaled, y_train)
-    val_accuracy = model.score(X_val_scaled, y_val)
-
-    logging.info(f"Model trained: Train accuracy = {train_accuracy:.4f}, Validation accuracy = {val_accuracy:.4f}")
-    return model, scaler
+        model = RandomForestClassifier(
+            n_estimators=200,
+            max_depth=10,
+            min_samples_split=10,
+            min_samples_leaf=5,
+            random_state=42,
+            class_weight='balanced'
+        )
+        
+        model.fit(X_train, y_train)
+        
+        train_accuracy = model.score(X_train, y_train)
+        test_accuracy = model.score(X_test, y_test)
+        
+        feature_importance = pd.DataFrame({
+            'feature': features,
+            'importance': model.feature_importances_
+        }).sort_values('importance', ascending=False)
+        
+        logging.info(f"Model trained successfully. Train accuracy: {train_accuracy:.4f}, Test accuracy: {test_accuracy:.4f}")
+        logging.info("\nTop 5 important features:\n" + feature_importance.head().to_string())
+        
+        return model, scaler
     except Exception as e:
         logging.error(f"Error training model: {e}")
         raise
