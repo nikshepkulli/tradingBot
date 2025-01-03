@@ -41,23 +41,14 @@ class InMemoryLogger(logging.Handler):
         if len(log_data) > 1000:
             log_data.pop(0)
 
-# Initialize logging with rotation
-log_file_handler = RotatingFileHandler("enhanced_trading_bot.log", maxBytes=5*1024*1024, backupCount=5)
-time_log_handler = TimedRotatingFileHandler("enhanced_trading_bot.log", when="midnight", interval=1, backupCount=7)
-
-for handler in [log_file_handler, time_log_handler]:
-    handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-
+# Initialize logging
+in_memory_logger = InMemoryLogger()
+in_memory_logger.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(), log_file_handler, time_log_handler]
+    handlers=[logging.StreamHandler(), logging.FileHandler("enhanced_trading_bot.log"), in_memory_logger]
 )
-
-# Add in-memory logger
-in_memory_logger = InMemoryLogger()
-in_memory_logger.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logging.getLogger().addHandler(in_memory_logger)
 
 # Load environment variables
 load_dotenv()
