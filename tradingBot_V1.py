@@ -181,51 +181,73 @@ def add_enhanced_indicators(data):
         raise
 
 
+# Enhanced model training function with cross-validation and hyperparameter tuning
 def train_enhanced_model(data):
-    """Train model with enhanced features and cross-validation"""
+    """Train model with cross-validation and advanced feature engineering"""
     try:
+        # Additional technical indicators
         features = [
             'rsi', 'ema_10', 'macd', 'bb_high', 'bb_low', 'bb_width',
-            'adx', 'vwap', 'volume_sma', 'price_range', 'volatility'
+            'adx', 'vwap', 'volume_sma', 'price_range', 'volatility',
+            'rsi_slope', 'volume_ratio', 'price_momentum', 'trend_strength'
         ]
+        
+        # Add momentum and trend features
+        data['rsi_slope'] = data['rsi'].diff(3)
+        data['volume_ratio'] = data['volume'] / data['volume'].rolling(10).mean()
+        data['price_momentum'] = data['close'].pct_change(5)
+        data['trend_strength'] = data['adx'] * (1 if data['ema_10'].iloc[-1] > data['close'].iloc[-1] else -1)
         
         X = data[features]
         y = data['target']
 
-        scaler = MinMaxScaler()
+        # Enhanced scaling with outlier handling
+        from sklearn.preprocessing import RobustScaler
+        scaler = RobustScaler()
         X_scaled = scaler.fit_transform(X)
         
+        # Time-based split for financial data
         train_size = int(len(data) * 0.8)
         X_train = X_scaled[:train_size]
         X_test = X_scaled[train_size:]
         y_train = y[:train_size]
         y_test = y[train_size:]
 
-        model = RandomForestClassifier(
-            n_estimators=200,
-            max_depth=10,
-            min_samples_split=10,
-            min_samples_leaf=5,
-            random_state=42,
-            class_weight='balanced'
+        # Hyperparameter optimization
+        from sklearn.model_selection import GridSearchCV
+        param_grid = {
+            'n_estimators': [200, 300],
+            'max_depth': [8, 10, 12],
+            'min_samples_split': [8, 10, 12],
+            'min_samples_leaf': [4, 5, 6],
+            'class_weight': ['balanced', 'balanced_subsample']
+        }
+        
+        base_model = RandomForestClassifier(random_state=42)
+        grid_search = GridSearchCV(
+            base_model, 
+            param_grid,
+            cv=5,
+            scoring='f1',
+            n_jobs=-1
         )
         
-        model.fit(X_train, y_train)
+        grid_search.fit(X_train, y_train)
+        best_model = grid_search.best_estimator_
         
-        train_accuracy = model.score(X_train, y_train)
-        test_accuracy = model.score(X_test, y_test)
+        # Calculate various metrics
+        from sklearn.metrics import precision_score, recall_score, f1_score
+        y_pred = best_model.predict(X_test)
+        precision = precision_score(y_test, y_pred)
+        recall = recall_score(y_test, y_pred)
+        f1 = f1_score(y_test, y_pred)
         
-        feature_importance = pd.DataFrame({
-            'feature': features,
-            'importance': model.feature_importances_
-        }).sort_values('importance', ascending=False)
+        logging.info(f"Model metrics - Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
+        logging.info(f"Best parameters: {grid_search.best_params_}")
         
-        logging.info(f"Model trained successfully. Train accuracy: {train_accuracy:.4f}, Test accuracy: {test_accuracy:.4f}")
-        logging.info("\nTop 5 important features:\n" + feature_importance.head().to_string())
-        
-        return model, scaler
+        return best_model, scaler
     except Exception as e:
-        logging.error(f"Error training model: {e}")
+        logging.error(f"Error in enhanced model training: {e}")
         raise
 
 def is_market_open():
@@ -310,75 +332,87 @@ def place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, 
         logging.error(f"Error placing order: {e}")
 
 def trading_bot():
-    """Main trading bot logic for multiple stocks"""
-    symbols = ["AAPL", "NVDA", "MSFT"]  # List of stocks to trade
-    risk_percentage = 0.02  # Risk 2% of account balance per trade
+    """Enhanced trading bot with improved accuracy"""
+    symbols = ["AAPL", "NVDA", "MSFT"]
+    risk_percentage = 0.02
     retrain_interval = timedelta(days=1)
     last_trained = {}
-    confidence_threshold = 0.75
-
-    # Track positions for each stock
-    positions = {symbol: False for symbol in symbols}
-
+    
+    # Dynamic confidence threshold based on market volatility
+    def get_confidence_threshold(volatility):
+        base_threshold = 0.75
+        return min(0.85, base_threshold + volatility * 0.5)
+    
+    # Enhanced position tracking with profit targets
+    positions = {symbol: {'active': False, 'entry_price': 0, 'profit_target': 0} for symbol in symbols}
+    
     while True:
         try:
             now = datetime.now()
-
+            
             for symbol in symbols:
+                if not is_market_open():
+                    logging.info(f"Market closed. Skipping {symbol}.")
+                    continue
+                
+                # Get market data
+                price = get_current_price_enhanced(symbol)
+                if price is None:
+                    continue
+                    
+                # Calculate market volatility
+                live_data = fetch_historical_data(symbol, now - timedelta(days=10), now)
+                if live_data.empty:
+                    continue
+                    
+                volatility = live_data['close'].pct_change().std()
+                confidence_threshold = get_confidence_threshold(volatility)
+                
                 # Retrain model if needed
                 if symbol not in last_trained or (now - last_trained[symbol]) >= retrain_interval:
-                    start_date = datetime(2021, 1, 1)
-                    end_date = now - timedelta(days=1)
-                    historical_data = fetch_historical_data(symbol, start_date, end_date)
+                    historical_data = fetch_historical_data(symbol, datetime(2021, 1, 1), now)
                     if not historical_data.empty:
                         historical_data = add_enhanced_indicators(historical_data)
                         model, scaler = train_enhanced_model(historical_data)
                         last_trained[symbol] = now
-
-                # Check if market is open
-                if is_market_open():
-                    # Get account balance
-                    balance = get_account_balance()
-                    if balance is None:
-                        logging.warning(f"Unable to fetch account balance for {symbol}. Skipping trading.")
-                        continue
-
-                    # Get current market data
-                    price = get_current_price_enhanced(symbol)
-                    if price is None:
-                        logging.warning(f"Skipping trading for {symbol} due to missing price data.")
-                        continue
-
-                    # Get live data for prediction
-                    live_data = fetch_historical_data(symbol, now - timedelta(days=60), now)
-                    if not live_data.empty:
-                        live_data = add_enhanced_indicators(live_data)
-                        features = [
-                            'rsi', 'ema_10', 'macd', 'bb_high', 'bb_low', 'bb_width',
-                            'adx', 'vwap', 'volume_sma', 'price_range', 'volatility'
-                        ]
-                        
-                        if all(feature in live_data.columns for feature in features):
-                            live_data_scaled = scaler.transform(live_data[features].iloc[-1:])
-                            probabilities = model.predict_proba(live_data_scaled)[0]
-
-                            # Trading decision for each stock
-                            if probabilities[1] > confidence_threshold and not positions[symbol]:
-                                logging.info(f"{symbol}: High confidence BUY signal detected ({probabilities[1]*100:.2f}%). Placing order.")
-                                place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, OrderSide.BUY, price)
-                                positions[symbol] = True  # Update position state
-                            elif probabilities[0] > confidence_threshold and positions[symbol]:
-                                logging.info(f"{symbol}: High confidence SELL signal detected ({probabilities[0]*100:.2f}%). Placing order.")
-                                place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, OrderSide.SELL, price)
-                                positions[symbol] = False  # Update position state
-                else:
-                    logging.info(f"Market is closed. Skipping trading for {symbol}.")
+                
+                # Enhanced prediction with market condition checks
+                live_data = add_enhanced_indicators(live_data)
+                features = live_data.columns[:-1]  # Exclude target column
+                live_data_scaled = scaler.transform(live_data[features].iloc[-1:])
+                probabilities = model.predict_proba(live_data_scaled)[0]
+                
+                # Trading logic with enhanced risk management
+                balance = get_account_balance()
+                if balance is None:
                     continue
-
+                
+                position = positions[symbol]
+                
+                # Buy signal with trend confirmation
+                if (probabilities[1] > confidence_threshold and 
+                    not position['active'] and 
+                    live_data['ema_10'].iloc[-1] > live_data['close'].iloc[-1]):
+                    
+                    logging.info(f"{symbol}: Strong buy signal ({probabilities[1]*100:.2f}%)")
+                    place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, OrderSide.BUY, price)
+                    position['active'] = True
+                    position['entry_price'] = price
+                    position['profit_target'] = price * (1 + volatility * 2)
+                
+                # Sell signals with multiple conditions
+                elif position['active'] and (
+                    probabilities[0] > confidence_threshold or  # Strong sell signal
+                    price >= position['profit_target'] or      # Profit target reached
+                    price <= position['entry_price'] * (1 - volatility)  # Stop loss
+                ):
+                    logging.info(f"{symbol}: Sell signal triggered")
+                    place_order_with_enhanced_risk_management(symbol, balance, risk_percentage, OrderSide.SELL, price)
+                    position['active'] = False
+        
         except Exception as e:
             logging.error(f"Error in main trading loop: {e}")
         
-        # Delay before next iteration
         time.sleep(60)
 
 
