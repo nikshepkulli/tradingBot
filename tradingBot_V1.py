@@ -188,7 +188,7 @@ def add_enhanced_indicators(data):
 
 # Enhanced model training function with cross-validation and hyperparameter tuning
 def train_enhanced_model(data):
-    """Train model with aligned feature set"""
+    """Train model using sklearn class weights"""
     try:
         features = [
             'ema_20', 'ema_50', 'sma_200', 'trend_strength', 
@@ -200,14 +200,11 @@ def train_enhanced_model(data):
         X = data[features]
         y = data['target']
 
-        # Handle class imbalance
-        from imblearn.over_sampling import SMOTE
-        from imblearn.under_sampling import RandomUnderSampler
-        from imblearn.pipeline import Pipeline
-
-        over = SMOTE(sampling_strategy=0.8)
-        under = RandomUnderSampler(sampling_strategy=0.9)
-        pipeline = Pipeline([('o', over), ('u', under)])
+        # Calculate class weights
+        from sklearn.utils.class_weight import compute_class_weight
+        classes = np.unique(y)
+        weights = compute_class_weight('balanced', classes=classes, y=y)
+        class_weights = dict(zip(classes, weights))
 
         train_size = int(len(data) * 0.8)
         X_train = X[:train_size]
@@ -215,10 +212,8 @@ def train_enhanced_model(data):
         y_train = y[:train_size]
         y_test = y[train_size:]
         
-        X_resampled, y_resampled = pipeline.fit_resample(X_train, y_train)
-        
         scaler = RobustScaler()
-        X_resampled_scaled = scaler.fit_transform(X_resampled)
+        X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
         
         model = RandomForestClassifier(
@@ -226,12 +221,12 @@ def train_enhanced_model(data):
             max_depth=8,
             min_samples_split=8,
             min_samples_leaf=6,
-            class_weight='balanced_subsample',
+            class_weight=class_weights,
             random_state=42,
             n_jobs=-1
         )
         
-        model.fit(X_resampled_scaled, y_resampled)
+        model.fit(X_train_scaled, y_train)
         
         y_pred = model.predict(X_test_scaled)
         precision = precision_score(y_test, y_pred)
