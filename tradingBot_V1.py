@@ -54,6 +54,11 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(), log_file_handler, time_log_handler]
 )
 
+# Add in-memory logger
+in_memory_logger = InMemoryLogger()
+in_memory_logger.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logging.getLogger().addHandler(in_memory_logger)
+
 # Load environment variables
 load_dotenv()
 API_KEY = os.getenv("ALPACA_API_KEY")
