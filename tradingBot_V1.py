@@ -9,6 +9,7 @@ from alpaca.trading.requests import MarketOrderRequest, StopLossRequest, TakePro
 from alpaca.trading.enums import OrderSide, TimeInForce
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import MinMaxScaler, RobustScaler
+from sklearn.metrics import precision_score
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import ta
