@@ -19,19 +19,26 @@ import os
 
 # Flask app setup
 app = Flask(__name__)
+log_data_lock = threading.Lock()
 log_data = []  # Store log entries for the web interface
 
 @app.route("/")
 def dashboard():
-    try:
-        return render_template("dashboard.html", logs=log_data)
-    except Exception as e:
-        logging.error(f"Error rendering dashboard: {e}")
-        return jsonify({"error": "Dashboard template not found"}), 500
+    with log_data_lock:
+        logs = list(log_data)  # Make a copy to avoid thread issues
+    return render_template("dashboard.html", logs=logs)
 
-@app.route("/logs")
-def get_logs():
-    return jsonify(log_data)
+
+@app.route("/")
+def dashboard():
+    with log_data_lock:
+        logs = list(log_data)  # Make a copy to avoid thread issues
+    return render_template("dashboard.html", logs=logs)
+
+@app.route("/test_logging")
+def test_logging():
+    logging.info("Test log entry added!")
+    return jsonify({"status": "Log entry added"})
 
 # Custom logger
 class InMemoryLogger(logging.Handler):
